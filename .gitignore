@@ -1,6 +1,8 @@
 bin/
+nightsky
 output/
 darks/
+*.mp4
 *.tmp
 nightsky.yaml
 .env
