@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nightsky</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #070b14;
+  --surface: #0d1422;
+  --card: #131d30;
+  --card-hover: #1a2640;
+  --border: #1e2d4a;
+  --accent: #5b8dee;
+  --accent-glow: rgba(91,141,238,0.15);
+  --text: #dce6f5;
+  --muted: #6b7d9e;
+  --success: #3dba8c;
+  --warning: #e8a030;
+  --danger: #e05252;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --mono: 'SF Mono', 'Cascadia Code', Consolas, monospace;
+  --radius: 8px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(7,11,20,0.92);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 24px;
+  height: 52px;
+}
+
+.logo {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.logo span { color: var(--accent); }
+
+.main-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.main-tabs button {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.main-tabs button:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+.main-tabs button.active { color: var(--accent); background: var(--accent-glow); }
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+.dot.live {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+  animation: pulse 2s ease-in-out infinite;
+}
+.dot.dead { background: var(--danger); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ── Main ────────────────────────────────────────────────── */
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* ── Cards / Config ──────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 768px) { .card-grid { grid-template-columns: 1fr; } }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.card.full { grid-column: 1 / -1; }
+
+.card-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+table.kv {
+  width: 100%;
+  border-collapse: collapse;
+}
+table.kv tr + tr td { border-top: 1px solid rgba(30,45,74,0.5); }
+table.kv td { padding: 5px 0; vertical-align: top; }
+table.kv td.k {
+  color: var(--muted);
+  width: 45%;
+  padding-right: 12px;
+  font-size: 13px;
+}
+table.kv td.v {
+  color: var(--text);
+  font-size: 13px;
+  word-break: break-all;
+}
+
+/* Mode card two-column layout */
+.mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 24px;
+}
+.mode-col-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 10px;
+  letter-spacing: 0.06em;
+}
+.mode-grid .col:first-child {
+  border-right: 1px solid var(--border);
+  padding-right: 24px;
+}
+
+/* Badges */
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+.badge.green { background: rgba(61,186,140,0.15); color: var(--success); }
+.badge.gray  { background: rgba(107,125,158,0.15); color: var(--muted); }
+.badge.blue  { background: var(--accent-glow); color: var(--accent); }
+
+/* Mono values */
+.mono { font-family: var(--mono); font-size: 12px; }
+
+/* ── Captures ────────────────────────────────────────────── */
+.captures-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.captures-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn:hover { background: var(--card-hover); border-color: var(--accent); }
+
+/* Date pills */
+.date-pills-wrap {
+  overflow-x: auto;
+  margin-bottom: 16px;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.date-pills {
+  display: flex;
+  gap: 8px;
+  min-width: max-content;
+}
+.pill {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.pill:hover { background: var(--card-hover); color: var(--text); }
+.pill.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+.pill .pill-count {
+  font-size: 10px;
+  margin-left: 5px;
+  opacity: 0.7;
+}
+
+/* Sub-tabs */
+.sub-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+}
+.sub-tabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sub-tabs button:hover { color: var(--text); }
+.sub-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* Image grid */
+.img-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.img-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--card);
+  cursor: pointer;
+}
+.img-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.2s;
+}
+.img-cell:hover img { transform: scale(1.04); }
+
+.img-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.75));
+  color: #fff;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 16px 8px 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.img-cell:hover .img-overlay { opacity: 1; }
+
+/* Placeholder cells for unloaded images */
+.img-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--surface);
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  0%   { background: var(--surface); }
+  50%  { background: var(--card); }
+  100% { background: var(--surface); }
+}
+
+/* Empty state */
+.empty {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.empty-icon { font-size: 36px; margin-bottom: 12px; }
+
+/* Video pane */
+.video-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+.video-wrap video {
+  width: 100%;
+  max-width: 800px;
+  border-radius: var(--radius);
+  background: #000;
+  border: 1px solid var(--border);
+}
+.video-placeholder {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* ── Lightbox ─────────────────────────────────────────────── */
+#lightbox {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(0,0,0,0.92);
+  backdrop-filter: blur(6px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+#lightbox.open { display: flex; }
+
+#lb-img {
+  max-width: 92vw;
+  max-height: 82vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.7);
+}
+
+.lb-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+.lb-btn {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lb-btn:hover { background: var(--card-hover); }
+.lb-counter { color: var(--muted); font-size: 13px; }
+.lb-close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.lb-close:hover { color: var(--text); }
+.lb-time {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* ── Loading spinner ──────────────────────────────────────── */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: 32px auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="/"><span>✦</span> Nightsky</a>
+  <div class="main-tabs">
+    <button id="tab-config" class="active" onclick="showTab('config')">Configuration</button>
+    <button id="tab-captures" onclick="showTab('captures')">Captures</button>
+  </div>
+  <div class="status-badge">
+    <div class="dot" id="status-dot"></div>
+    <span id="status-text">connecting…</span>
+  </div>
+</header>
+
+<main>
+  <!-- Configuration tab -->
+  <div id="pane-config" class="tab-pane active">
+    <div id="config-content"><div class="spinner"></div></div>
+  </div>
+
+  <!-- Captures tab -->
+  <div id="pane-captures" class="tab-pane">
+    <div class="captures-header">
+      <span class="captures-title">Captures</span>
+      <button class="btn" onclick="loadCaptures(true)">Refresh ↺</button>
+    </div>
+    <div id="captures-content"><div class="spinner"></div></div>
+  </div>
+</main>
+
+<!-- Lightbox -->
+<div id="lightbox" role="dialog" aria-modal="true">
+  <button class="lb-close" onclick="lbClose()" title="Close">✕</button>
+  <img id="lb-img" src="" alt="">
+  <div class="lb-time" id="lb-time"></div>
+  <div class="lb-controls">
+    <button class="lb-btn" onclick="lbNav(-1)" title="Previous">‹</button>
+    <span class="lb-counter" id="lb-counter"></span>
+    <button class="lb-btn" onclick="lbNav(1)" title="Next">›</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ── Utilities ──────────────────────────────────────────── */
+function fmtDur(ns) {
+  if (typeof ns !== 'number') return String(ns);
+  const s = ns / 1e9;
+  if (s >= 1) return (s % 1 === 0 ? s : +s.toFixed(1)) + 's';
+  return Math.round(ns / 1e6) + 'ms';
+}
+
+function badge(v, onLabel = 'enabled', offLabel = 'disabled') {
+  return v
+    ? `<span class="badge green">${onLabel}</span>`
+    : `<span class="badge gray">${offLabel}</span>`;
+}
+
+function kv(pairs) {
+  return '<table class="kv">' + pairs.map(([k, v]) =>
+    `<tr><td class="k">${k}</td><td class="v">${v}</td></tr>`
+  ).join('') + '</table>';
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/* ── Tab routing ────────────────────────────────────────── */
+let capturesLoaded = false;
+
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.main-tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'captures' && !capturesLoaded) {
+    loadCaptures(false);
+  }
+}
+
+/* ── Status ─────────────────────────────────────────────── */
+async function checkStatus() {
+  const dot  = document.getElementById('status-dot');
+  const text = document.getElementById('status-text');
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    dot.className  = 'dot live';
+    text.textContent = `v${data.version} · ${data.camera_type}`;
+  } catch {
+    dot.className  = 'dot dead';
+    text.textContent = 'offline';
+  }
+}
+
+/* ── Config ─────────────────────────────────────────────── */
+function renderConfig(cfg) {
+  const c = cfg.camera;
+  const loc = cfg.location;
+  const out = cfg.output;
+  const tl  = cfg.output.timelapse;
+  const up  = cfg.upload;
+  const dk  = cfg.dark;
+
+  const flipLabels = ['none', 'horizontal', 'vertical', 'both'];
+  const flipLabel = flipLabels[c.flip] || String(c.flip);
+
+  function modeKV(m) {
+    return kv([
+      ['Exposure',          `<span class="mono">${fmtDur(m.exposure)}</span>`],
+      ['Max Exposure',      `<span class="mono">${fmtDur(m.max_exposure)}</span>`],
+      ['Gain',              esc(m.gain)],
+      ['Max Gain',          esc(m.max_gain)],
+      ['Auto Exposure',     badge(m.auto_exposure)],
+      ['Target Brightness', esc(m.target_brightness)],
+      ['Delay',             `<span class="mono">${fmtDur(m.delay)}</span>`],
+      ['Binning',           esc(m.binning) + '×'],
+      ['WB Red / Blue',     `${m.wb_red} / ${m.wb_blue}`],
+      ['Auto WB',           badge(m.awb)],
+      ['Image Type',        `<span class="badge blue">${esc(m.image_type)}</span>`],
+      ['JPEG Quality',      esc(m.quality)],
+      ['Skip Frames',       esc(m.skip_frames)],
+      ['Denoise',           `<span class="mono">${esc(m.denoise)}</span>`],
+      ['Cooler',            badge(m.cooler_enabled)],
+      ['Cooler Target',     m.cooler_enabled ? esc(m.cooler_target) + ' °C' : '—'],
+    ]);
+  }
+
+  const html = `
+    <div class="card-grid">
+
+      <div class="card">
+        <div class="card-title">Camera</div>
+        ${kv([
+          ['Type',          `<span class="badge blue">${esc(c.type)}</span>`],
+          ['Index',         esc(c.index)],
+          ['Device',        esc(c.device)],
+          ['USB Bandwidth', esc(c.usb_bandwidth) + '%'],
+          ['Flip',          esc(flipLabel)],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Location</div>
+        ${kv([
+          ['Latitude',       `<span class="mono">${loc.latitude}°</span>`],
+          ['Longitude',      `<span class="mono">${loc.longitude}°</span>`],
+          ['Twilight Angle', `<span class="mono">${loc.angle}°</span>`],
+        ])}
+      </div>
+
+      <div class="card full">
+        <div class="card-title">Capture Modes</div>
+        <div class="mode-grid">
+          <div class="col">
+            <div class="mode-col-header">Night</div>
+            ${modeKV(cfg.night)}
+          </div>
+          <div class="col">
+            <div class="mode-col-header">Day</div>
+            ${modeKV(cfg.day)}
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Output</div>
+        ${kv([
+          ['Directory',      `<span class="mono">${esc(out.directory)}</span>`],
+          ['Filename Prefix',`<span class="mono">${esc(out.filename_prefix)}</span>`],
+          ['Days to Keep',   out.days_to_keep === 0 ? 'forever' : esc(out.days_to_keep) + ' days'],
+          ['Overlay',        badge(out.overlay)],
+          ['Overlay Font',   esc(out.overlay_font_size) + 'pt'],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Timelapse</div>
+        ${kv([
+          ['Enabled', badge(tl.enabled)],
+          ['FPS',     esc(tl.fps)],
+          ['Bitrate', `<span class="mono">${esc(tl.bitrate)}</span>`],
+          ['Codec',   `<span class="mono">${esc(tl.codec)}</span>`],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Upload</div>
+        ${kv([
+          ['Upload Images',    badge(up.upload_images)],
+          ['Upload Timelapse', badge(up.upload_timelapse)],
+          ['S3 Enabled',       badge(up.s3.enabled)],
+          ['S3 Bucket',        up.s3.enabled ? esc(up.s3.bucket) : '—'],
+          ['S3 Region',        up.s3.enabled ? `<span class="mono">${esc(up.s3.region)}</span>` : '—'],
+          ['S3 Prefix',        up.s3.enabled ? `<span class="mono">${esc(up.s3.prefix)}</span>` : '—'],
+          ['S3 Endpoint',      (up.s3.enabled && up.s3.endpoint) ? `<span class="mono">${esc(up.s3.endpoint)}</span>` : '—'],
+          ['HTTP Enabled',     badge(up.http.enabled)],
+          ['HTTP URL',         up.http.enabled ? `<span class="mono">${esc(up.http.url)}</span>` : '—'],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Dark Frames</div>
+        ${kv([
+          ['Enabled',   badge(dk.enabled)],
+          ['Directory', `<span class="mono">${esc(dk.directory)}</span>`],
+          ['Count',     esc(dk.count) + ' frames'],
+        ])}
+      </div>
+
+    </div>
+  `;
+
+  document.getElementById('config-content').innerHTML = html;
+}
+
+async function loadConfig() {
+  try {
+    const res = await fetch('/api/config');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const cfg = await res.json();
+    renderConfig(cfg);
+  } catch (e) {
+    document.getElementById('config-content').innerHTML =
+      `<div class="empty"><div class="empty-icon">⚠</div>Failed to load configuration: ${esc(String(e))}</div>`;
+  }
+}
+
+/* ── Captures ───────────────────────────────────────────── */
+let capturesList = [];
+let activeDate   = null;
+let activeSub    = 'images';
+let dateImages   = {};  // cache: date -> {images, video}
+
+async function loadCaptures(force) {
+  capturesLoaded = true;
+  if (force) {
+    dateImages  = {};
+    activeDate  = null;
+  }
+
+  const el = document.getElementById('captures-content');
+  el.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    const res = await fetch('/api/captures');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    capturesList = await res.json();
+  } catch (e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div>Failed to load captures: ${esc(String(e))}</div>`;
+    return;
+  }
+
+  if (capturesList.length === 0) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📷</div>No captures yet.</div>`;
+    return;
+  }
+
+  if (!activeDate || !capturesList.find(c => c.date === activeDate)) {
+    activeDate = capturesList[0].date;
+  }
+
+  renderCaptures();
+  await loadDateContent(activeDate);
+}
+
+function renderCaptures() {
+  const pills = capturesList.map(c => {
+    const active = c.date === activeDate ? 'active' : '';
+    return `<button class="pill ${active}" onclick="selectDate('${esc(c.date)}')">${esc(c.date)}<span class="pill-count">${c.image_count}</span></button>`;
+  }).join('');
+
+  const subImages = activeSub === 'images' ? 'active' : '';
+  const subVideo  = activeSub === 'video'  ? 'active' : '';
+
+  document.getElementById('captures-content').innerHTML = `
+    <div class="date-pills-wrap">
+      <div class="date-pills">${pills}</div>
+    </div>
+    <div class="sub-tabs">
+      <button class="${subImages}" onclick="selectSub('images')">Images</button>
+      <button class="${subVideo}"  onclick="selectSub('video')">Video</button>
+    </div>
+    <div id="date-content"><div class="spinner"></div></div>
+  `;
+}
+
+async function selectDate(date) {
+  activeDate = date;
+  renderCaptures();
+  await loadDateContent(date);
+}
+
+function selectSub(sub) {
+  activeSub = sub;
+  renderCaptures();
+  renderDateContent(activeDate);
+}
+
+async function loadDateContent(date) {
+  if (dateImages[date]) {
+    renderDateContent(date);
+    return;
+  }
+
+  const el = document.getElementById('date-content');
+  if (el) el.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    const res = await fetch(`/api/captures/${encodeURIComponent(date)}/images`);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    dateImages[date] = await res.json();
+  } catch (e) {
+    if (el) el.innerHTML = `<div class="empty"><div class="empty-icon">⚠</div>Failed to load: ${esc(String(e))}</div>`;
+    return;
+  }
+
+  renderDateContent(date);
+}
+
+function renderDateContent(date) {
+  const el = document.getElementById('date-content');
+  if (!el) return;
+
+  const data = dateImages[date];
+  if (!data) { el.innerHTML = '<div class="spinner"></div>'; return; }
+
+  if (activeSub === 'images') {
+    renderImages(el, data.images || []);
+  } else {
+    renderVideo(el, data.video, date);
+  }
+}
+
+/* Current image list for lightbox */
+let lbImages = [];
+let lbIdx    = 0;
+
+function renderImages(container, images) {
+  if (images.length === 0) {
+    container.innerHTML = `<div class="empty"><div class="empty-icon">📷</div>No images for this date.</div>`;
+    return;
+  }
+
+  lbImages = images;
+
+  const cells = images.map((img, i) => `
+    <div class="img-cell" onclick="lbOpen(${i})">
+      <div class="img-placeholder" data-src="${esc(img.thumb_url)}" data-idx="${i}"></div>
+      <div class="img-overlay">${esc(img.time || '')}</div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `<div class="img-grid">${cells}</div>`;
+
+  // Lazy-load via IntersectionObserver
+  const obs = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const ph = entry.target;
+      const src = ph.dataset.src;
+      if (!src) return;
+      obs.unobserve(ph);
+
+      const imgEl = document.createElement('img');
+      imgEl.loading = 'lazy';
+      imgEl.alt     = '';
+      imgEl.onload  = () => { ph.replaceWith(imgEl); };
+      imgEl.onerror = () => { ph.style.background = 'var(--surface)'; };
+      imgEl.src     = src;
+    });
+  }, { rootMargin: '200px' });
+
+  container.querySelectorAll('[data-src]').forEach(el => obs.observe(el));
+}
+
+function renderVideo(container, videoURL, date) {
+  if (!videoURL) {
+    container.innerHTML = `<div class="video-placeholder"><div class="empty-icon">🎞</div>No timelapse for ${esc(date)}.</div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="video-wrap">
+      <video controls preload="metadata">
+        <source src="${esc(videoURL)}" type="video/mp4">
+        Your browser does not support HTML5 video.
+      </video>
+      <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${esc(videoURL)}</div>
+    </div>
+  `;
+}
+
+/* ── Lightbox ───────────────────────────────────────────── */
+function lbOpen(idx) {
+  lbIdx = idx;
+  lbShow();
+  document.getElementById('lightbox').classList.add('open');
+}
+
+function lbClose() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+
+function lbShow() {
+  const img = lbImages[lbIdx];
+  if (!img) return;
+  document.getElementById('lb-img').src     = img.url;
+  document.getElementById('lb-time').textContent = img.time || '';
+  document.getElementById('lb-counter').textContent = `${lbIdx + 1} / ${lbImages.length}`;
+}
+
+function lbNav(dir) {
+  lbIdx = (lbIdx + dir + lbImages.length) % lbImages.length;
+  lbShow();
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', e => {
+  const lb = document.getElementById('lightbox');
+  if (!lb.classList.contains('open')) return;
+  if (e.key === 'Escape')      lbClose();
+  if (e.key === 'ArrowLeft')   lbNav(-1);
+  if (e.key === 'ArrowRight')  lbNav(1);
+});
+
+// Click outside image to close
+document.getElementById('lightbox').addEventListener('click', e => {
+  if (e.target === document.getElementById('lightbox')) lbClose();
+});
+
+/* ── Init ───────────────────────────────────────────────── */
+checkStatus();
+loadConfig();
+</script>
+</body>
+</html>

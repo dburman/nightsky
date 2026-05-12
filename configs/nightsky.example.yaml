@@ -1,0 +1,107 @@
+# Nightsky Configuration
+# Copy this file to nightsky.yaml and adjust for your setup.
+
+camera:
+  # Camera backend: "libcamera" (Raspberry Pi) or "zwo" (ZWO ASI USB cameras)
+  type: libcamera
+  # Device index (0 for first camera)
+  device: 0
+  # ZWO-specific: camera index when multiple ZWO cameras are connected
+  index: 0
+  # ZWO-specific: USB bandwidth limit (40-100, lower if sharing USB bus)
+  usb_bandwidth: 80
+  # Image flip: 0=none, 1=horizontal, 2=vertical, 3=both
+  flip: 0
+
+location:
+  # Your geographic coordinates (used for day/night detection)
+  latitude: 40.7128
+  longitude: -74.0060
+  # Sun altitude angle for day/night transition (degrees)
+  # -6 = civil twilight (default), -12 = nautical, -18 = astronomical
+  angle: -6
+
+# Day mode settings (sun above angle threshold)
+day:
+  exposure: 1ms
+  max_exposure: 100ms
+  gain: 1
+  max_gain: 10
+  auto_exposure: true
+  target_brightness: 160
+  delay: 5s
+  binning: 1
+  wb_red: 52
+  wb_blue: 90
+  awb: true
+  image_type: jpg
+  quality: 95
+  skip_frames: 5
+  denoise: cdn_fast
+
+# Night mode settings (sun below angle threshold)
+night:
+  exposure: 10s
+  max_exposure: 60s
+  gain: 200
+  max_gain: 400
+  auto_exposure: true
+  target_brightness: 90
+  delay: 0s
+  binning: 1
+  wb_red: 52
+  wb_blue: 90
+  awb: false
+  image_type: png
+  quality: 95
+  skip_frames: 1
+  denoise: off
+  # ZWO cooler settings (ignored for RPi cameras)
+  cooler_enabled: false
+  cooler_target: -10
+
+output:
+  # Base directory for captured images. Images saved to <dir>/YYYY-MM-DD/
+  directory: ./output
+  # Filename prefix for images
+  filename_prefix: allsky
+  # Auto-delete directories older than this many days (0 = keep forever)
+  days_to_keep: 14
+  # Overlay timestamp and metadata on images
+  overlay: true
+  overlay_font_size: 24
+
+  timelapse:
+    enabled: true
+    fps: 25
+    bitrate: 2000k
+    codec: libx264
+
+upload:
+  # Upload each captured image (can be bandwidth-heavy)
+  upload_images: false
+  # Upload timelapse video at end of night
+  upload_timelapse: true
+
+  s3:
+    enabled: false
+    bucket: my-allsky-bucket
+    region: us-east-1
+    # S3 key prefix
+    prefix: nightsky
+    # Custom endpoint for S3-compatible services (MinIO, Backblaze B2, etc.)
+    # endpoint: https://s3.us-east-005.backblazeb2.com
+
+  http:
+    enabled: false
+    url: https://example.com/upload
+    # Authorization header (e.g., "Bearer <token>")
+    # authorization: Bearer mytoken
+
+dark:
+  # Enable dark frame subtraction
+  enabled: false
+  # Directory to store dark frames
+  directory: ./darks
+  # Number of dark frames to average
+  count: 5

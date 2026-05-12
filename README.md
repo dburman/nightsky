@@ -1,0 +1,499 @@
+# Nightsky
+
+A lightweight, CLI-configured all-sky camera service for long-exposure night photography and timelapse generation. Captures images continuously, automatically switching between day and night modes based on sun position, and uploads results to S3 or HTTP endpoints.
+
+Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripped down to the essentials — no PHP, no Node. Configure everything from the command line or a single YAML file.
+
+## Features
+
+- **ZWO ASI camera support** — Full control via CGo bindings to the ASI SDK: exposure up to 300s, gain, white balance, binning (1x/2x/4x), flip, TEC cooler, temperature readout, USB bandwidth control
+- **Raspberry Pi camera support** — Wraps `rpicam-still` / `libcamera-still` for CSI cameras (HQ IMX477, Module 3 IMX708, and others)
+- **Automatic day/night switching** — Built-in NOAA solar position algorithm determines day/night based on your coordinates and a configurable sun altitude angle (civil, nautical, or astronomical twilight)
+- **Auto-exposure** — Logarithmic exposure level algorithm that adjusts exposure and gain to maintain target brightness, with anti-oscillation detection
+- **Dark frame subtraction** — Capture, average, and subtract calibration frames to remove hot pixels and fixed-pattern noise
+- **Timelapse generation** — Assembles each night's images into an MP4 video via ffmpeg
+- **S3 upload** — AWS S3 with support for custom endpoints (Backblaze B2, MinIO, etc.)
+- **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
+- **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
+- **Automatic cleanup** — Configurable retention period removes old capture directories
+- **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date, viewing timelapse videos, and inspecting live configuration — no external dependencies, embedded in the binary
+- **Single binary** — Cross-compiles to ARM64 for Raspberry Pi deployment
+
+---
+
+## Building
+
+### Requirements (build)
+
+- **Go 1.22+**
+- **Docker** (optional, for cross-compilation without a local toolchain)
+
+### Build from source
+
+```bash
+git clone https://github.com/dburman/nightsky.git
+cd nightsky
+
+# Build for the current platform (RPi cameras only)
+make build
+
+# Build with ZWO ASI SDK support (requires libASICamera2 + libusb-1.0 headers)
+make build-zwo
+
+# Install to /usr/local/bin
+sudo make install
+
+# Run tests
+make test
+
+# Lint (requires golangci-lint)
+make lint
+```
+
+### Cross-compile for Raspberry Pi
+
+#### Native cross-compilation
+
+Requires `aarch64-linux-gnu-gcc` (arm64) or `arm-linux-gnueabihf-gcc` (armv7) installed locally.
+
+```bash
+# RPi 3/4/5 (64-bit ARM)
+make build-arm64
+
+# RPi 3/4/5 with ZWO ASI SDK
+make build-arm64-zwo
+```
+
+Copy the binary to your Pi:
+
+```bash
+scp bin/nightsky-arm64 pi@raspberrypi:~/nightsky
+```
+
+#### Cross-compile via Docker (no toolchain required)
+
+Docker handles the entire cross-compilation environment — no need to install Go, cross-compilers, or ARM libraries on your host machine.
+
+```bash
+# RPi 3/4/5 (64-bit ARM)
+make docker-arm64
+
+# RPi 3/4/5 (64-bit ARM) with ZWO ASI SDK
+make docker-arm64-zwo
+
+# RPi 2 / Zero 2 (32-bit ARMv7)
+make docker-armv7
+
+# RPi 2 / Zero 2 (32-bit ARMv7) with ZWO ASI SDK
+make docker-armv7-zwo
+```
+
+The binary is output to `bin/nightsky-arm64` or `bin/nightsky-armv7`.
+
+### CI / GHCR builds
+
+Pushing to `main` (or tagging a release) triggers `.github/workflows/docker.yml`, which builds a `linux/arm64` image via QEMU and pushes it to `ghcr.io/dburman/nightsky`. The `docker-compose.yml` on the Pi pulls this image directly — no manual build or transfer step required.
+
+### Build a Docker runtime image locally
+
+Use the plain `Dockerfile` with `docker buildx` to build and load a local image (libcamera / no ZWO):
+
+```bash
+docker buildx build --platform linux/arm64 --load -t nightsky:latest .
+```
+
+For the ZWO variant or ARMv7 targets, use `Dockerfile.build` via the Makefile targets (`make docker-arm64-zwo`, `make docker-armv7`, etc.).
+
+---
+
+## Deploying
+
+### Requirements (runtime)
+
+- **ffmpeg** — for timelapse generation
+- **rpicam-still** or **libcamera-still** — for Raspberry Pi CSI cameras (Bookworm uses `rpicam-still`; Bullseye uses `libcamera-still` — nightsky auto-detects both)
+- **libASICamera2 + libusb-1.0** — for ZWO cameras (only if built with `-tags zwo`)
+
+### Option 1: Docker Compose (recommended)
+
+The `docker-compose.yml` in this repo is ready to use. It pulls the pre-built `linux/arm64` image from GHCR and runs both services — no local build required.
+
+```bash
+# Copy and edit your config
+cp configs/nightsky.example.yaml nightsky.yaml
+
+# Pull and start both services
+docker compose pull
+docker compose up -d
+
+# View logs
+docker compose logs -f nightsky      # capture loop
+docker compose logs -f nightsky-ui   # web UI
+```
+
+Then open `http://<pi-hostname>:8080` in a browser.
+
+The `nightsky-ui` service shares the same `./output` volume as `nightsky` so it sees captures in real time without needing camera access.
+
+To pass AWS credentials for S3 upload, either set them in the `environment` section of `docker-compose.yml` or mount your credentials file:
+
+```yaml
+volumes:
+  - ~/.aws:/root/.aws:ro
+```
+
+### Option 2: systemd services
+
+Create two unit files — one for capture, one for the web UI.
+
+`/etc/systemd/system/nightsky.service`:
+
+```ini
+[Unit]
+Description=Nightsky All-Sky Camera
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/nightsky capture --config /etc/nightsky/nightsky.yaml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`/etc/systemd/system/nightsky-ui.service`:
+
+```ini
+[Unit]
+Description=Nightsky Web UI
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+ExecStart=/usr/local/bin/nightsky serve --config /etc/nightsky/nightsky.yaml --addr :8080
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable nightsky nightsky-ui
+sudo systemctl start nightsky nightsky-ui
+
+# View logs
+journalctl -u nightsky -f
+journalctl -u nightsky-ui -f
+```
+
+Then open `http://<pi-hostname>:8080` in a browser.
+
+### Option 3: Docker run
+
+```bash
+# Capture
+docker run -d --name nightsky \
+  --device /dev/video0 \
+  --device /dev/vchiq \
+  -v ./nightsky.yaml:/etc/nightsky/nightsky.yaml:ro \
+  -v ./output:/output \
+  nightsky:latest
+
+# Web UI (shares the same output volume)
+docker run -d --name nightsky-ui \
+  -p 8080:8080 \
+  -v ./nightsky.yaml:/etc/nightsky/nightsky.yaml:ro \
+  -v ./output:/output \
+  nightsky:latest \
+  serve --config /etc/nightsky/nightsky.yaml --addr :8080
+```
+
+---
+
+## Configuration
+
+Nightsky uses a single YAML configuration file. The search order is:
+
+1. Path specified by `--config` flag
+2. `./nightsky.yaml`
+3. `$HOME/.config/nightsky/nightsky.yaml`
+4. `/etc/nightsky/nightsky.yaml`
+
+Environment variables override config file values with the prefix `NIGHTSKY_` (e.g., `NIGHTSKY_CAMERA_TYPE=zwo`).
+
+See [`configs/nightsky.example.yaml`](configs/nightsky.example.yaml) for a fully commented example.
+
+### Camera
+
+```yaml
+camera:
+  type: libcamera    # "libcamera" or "zwo"
+  index: 0           # ZWO camera index (when multiple connected)
+  device: 0          # libcamera device index
+  usb_bandwidth: 80  # ZWO USB bandwidth limit (40-100)
+  flip: 0            # 0=none, 1=horizontal, 2=vertical, 3=both
+```
+
+### Location
+
+```yaml
+location:
+  latitude: 40.7128
+  longitude: -74.0060
+  # Sun altitude angle for day/night transition (degrees)
+  # -6 = civil twilight, -12 = nautical, -18 = astronomical
+  angle: -6
+```
+
+### Day/Night mode settings
+
+Each mode has independent settings for exposure, gain, and image format:
+
+```yaml
+day:
+  exposure: 1ms
+  max_exposure: 100ms
+  gain: 1
+  max_gain: 10
+  auto_exposure: true
+  target_brightness: 160
+  delay: 5s
+  binning: 1
+  wb_red: 52              # White balance red (ZWO: 0-99)
+  wb_blue: 90             # White balance blue (ZWO: 0-99)
+  awb: true               # Auto white balance (libcamera only)
+  image_type: jpg         # "jpg" or "png"
+  quality: 95             # JPEG quality (1-100)
+  skip_frames: 5          # Frames to discard after mode transition
+  denoise: cdn_fast       # libcamera denoising: off, cdn_off, cdn_fast, cdn_hq
+
+night:
+  exposure: 10s
+  max_exposure: 60s
+  gain: 200
+  max_gain: 400
+  auto_exposure: true
+  target_brightness: 90
+  delay: 0s
+  binning: 1
+  wb_red: 52
+  wb_blue: 90
+  awb: false
+  image_type: png
+  quality: 95
+  skip_frames: 1
+  denoise: off
+  cooler_enabled: false   # ZWO TEC cooler
+  cooler_target: -10      # Target temperature (°C)
+```
+
+### Output
+
+```yaml
+output:
+  directory: ./output       # Base directory; images saved to <dir>/YYYY-MM-DD/
+  filename_prefix: allsky   # Filename prefix for captured images
+  days_to_keep: 14          # Delete directories older than this (0 = keep forever)
+  overlay: true             # Render timestamp/metadata on images
+  overlay_font_size: 24
+
+  timelapse:
+    enabled: true
+    fps: 25
+    bitrate: 2000k
+    codec: libx264          # or libx265
+```
+
+### Upload
+
+```yaml
+upload:
+  upload_images: false     # Upload every captured image
+  upload_timelapse: true   # Upload timelapse at end of night
+
+  s3:
+    enabled: true
+    bucket: my-allsky-bucket
+    region: us-east-1
+    prefix: nightsky
+    # For S3-compatible services:
+    # endpoint: https://s3.us-east-005.backblazeb2.com
+
+  http:
+    enabled: false
+    url: https://example.com/upload
+    authorization: Bearer mytoken
+```
+
+S3 credentials are resolved via the standard AWS credential chain (environment variables, `~/.aws/credentials`, IAM role, etc.).
+
+### Dark frames
+
+```yaml
+dark:
+  enabled: false        # Enable dark frame subtraction during capture
+  directory: ./darks    # Where dark frames are stored
+  count: 5              # Frames to average when capturing darks
+```
+
+---
+
+## Usage
+
+### Quick start
+
+```bash
+# 1. Create config
+cp configs/nightsky.example.yaml nightsky.yaml
+
+# 2. Verify your camera
+nightsky info
+
+# 3. Start capturing
+nightsky capture
+```
+
+Images are saved to `./output/YYYY-MM-DD/`. The service runs continuously, switching between day and night modes automatically. Press Ctrl+C to stop.
+
+### Commands
+
+```
+nightsky [command] [flags]
+
+Commands:
+  capture     Start the continuous capture loop
+  serve       Start the web UI server
+  timelapse   Generate a timelapse video from captured images
+  dark        Capture dark frames for calibration
+  info        Display camera information
+  clean       Remove old capture directories
+  version     Print version
+
+Global Flags:
+  -c, --config string      Path to config file (default: ./nightsky.yaml)
+  -l, --log-level string   Log level: debug, info, warn, error (default "info")
+```
+
+### `nightsky capture`
+
+Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. At the end of each night, generates a timelapse and uploads it if configured.
+
+```bash
+nightsky capture
+nightsky capture --config /etc/nightsky/nightsky.yaml
+nightsky capture --log-level debug
+```
+
+### `nightsky serve`
+
+Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected. Open the URL in a browser to browse captures by date, play timelapse videos, and inspect the current configuration.
+
+```bash
+nightsky serve
+nightsky serve --addr :8080
+nightsky serve --config /etc/nightsky/nightsky.yaml --addr 0.0.0.0:8080
+```
+
+The UI is served at `http://localhost:8080` by default. It is embedded in the binary with no external dependencies.
+
+### `nightsky timelapse`
+
+Generates a timelapse video from a directory of captured images.
+
+```bash
+# Most recent date directory
+nightsky timelapse
+
+# Specific directory with custom settings
+nightsky timelapse --dir ./output/2026-03-16 --fps 30 --bitrate 4000k --codec libx265
+```
+
+### `nightsky dark`
+
+Captures dark frames for calibration. **Cover the camera lens before running this command.** Captures dark frames for both day and night mode exposure settings.
+
+```bash
+nightsky dark
+```
+
+Dark frames are saved to `dark.directory` (default `./darks/`) and are automatically loaded during capture when `dark.enabled` is true.
+
+### `nightsky info`
+
+Displays information about the connected camera, including resolution, controls, and supported features.
+
+```bash
+nightsky info
+```
+
+Example output:
+
+```
+Camera: RPi imx477
+Model:  imx477
+Resolution: 4056 x 3040
+Color:  true
+Cooler: false
+Bayer:  RGGB
+
+Controls:
+  Exposure                  min=1        max=200000   default=10000
+  Gain                      min=0        max=600      default=0    [auto]
+  ...
+
+Sensor Temperature: 22.5°C
+```
+
+### `nightsky clean`
+
+Removes capture directories older than the configured retention period.
+
+```bash
+nightsky clean
+nightsky clean --days 7
+```
+
+---
+
+## Output Structure
+
+```
+output/
+├── 2026-03-15/
+│   ├── allsky-20260315191503.png
+│   ├── allsky-20260315191513.png
+│   ├── ...
+│   └── timelapse.mp4
+├── 2026-03-16/
+│   ├── allsky-20260316190012.png
+│   └── ...
+darks/
+├── dark_10000ms_gain200_bin1.png
+└── dark_1ms_gain1_bin1.png
+```
+
+## Architecture
+
+```
+cmd/nightsky/          CLI entrypoint (cobra)
+internal/
+├── camera/            Camera interface
+│   ├── zwo/           ZWO ASI SDK via CGo (build tag: zwo)
+│   └── libcamera/     rpicam-still / libcamera-still CLI wrapper
+├── capture/           Capture loop, auto-exposure, dark frames
+├── astro/             Sun position calculation (NOAA algorithm)
+├── image/             Overlay rendering, image encoding
+├── timelapse/         ffmpeg video assembly
+├── upload/            S3 and HTTP upload backends
+└── config/            YAML configuration with viper
+```
+
+## License
+
+MIT

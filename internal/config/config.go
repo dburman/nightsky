@@ -1,0 +1,285 @@
+package config
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+var Version = "dev"
+
+// Config is the top-level configuration for nightsky.
+type Config struct {
+	Camera   CameraConfig   `mapstructure:"camera"    json:"camera"`
+	Location LocationConfig `mapstructure:"location"  json:"location"`
+	Day      ModeConfig     `mapstructure:"day"       json:"day"`
+	Night    ModeConfig     `mapstructure:"night"     json:"night"`
+	Output   OutputConfig   `mapstructure:"output"    json:"output"`
+	Upload   UploadConfig   `mapstructure:"upload"    json:"upload"`
+	Dark     DarkConfig     `mapstructure:"dark"      json:"dark"`
+}
+
+// CameraConfig identifies which camera backend and device to use.
+type CameraConfig struct {
+	// Type: "zwo" or "libcamera"
+	Type string `mapstructure:"type"          json:"type"`
+	// Index for ZWO cameras when multiple are connected (default 0).
+	Index int `mapstructure:"index"         json:"index"`
+	// Device path for libcamera (default 0).
+	Device int `mapstructure:"device"        json:"device"`
+	// USB bandwidth limit for ZWO (40-100, default 80).
+	USBBandwidth int `mapstructure:"usb_bandwidth" json:"usb_bandwidth"`
+	// Flip: 0=none, 1=horizontal, 2=vertical, 3=both
+	Flip int `mapstructure:"flip"          json:"flip"`
+}
+
+// LocationConfig provides geographic position for sun calculations.
+type LocationConfig struct {
+	Latitude  float64 `mapstructure:"latitude"  json:"latitude"`
+	Longitude float64 `mapstructure:"longitude" json:"longitude"`
+	// Sun altitude angle in degrees to transition day/night (default -6 = civil twilight).
+	Angle float64 `mapstructure:"angle" json:"angle"`
+}
+
+// ModeConfig holds capture settings for either day or night mode.
+type ModeConfig struct {
+	// Exposure time. Parsed as duration (e.g., "100ms", "10s", "30s").
+	Exposure time.Duration `mapstructure:"exposure"          json:"exposure"`
+	// Maximum exposure for auto-exposure mode.
+	MaxExposure time.Duration `mapstructure:"max_exposure"      json:"max_exposure"`
+	// Gain (0-600 for ZWO, 0-16 for libcamera).
+	Gain float64 `mapstructure:"gain"              json:"gain"`
+	// Maximum gain for auto-exposure mode.
+	MaxGain float64 `mapstructure:"max_gain"          json:"max_gain"`
+	// AutoExposure enables the mean-brightness auto-exposure algorithm.
+	AutoExposure bool `mapstructure:"auto_exposure"     json:"auto_exposure"`
+	// TargetBrightness is the target mean pixel brightness (0-255, default 90 night / 160 day).
+	TargetBrightness float64 `mapstructure:"target_brightness" json:"target_brightness"`
+	// Delay between captures.
+	Delay time.Duration `mapstructure:"delay"             json:"delay"`
+	// Binning (1, 2, or 4). Higher values increase sensitivity at lower resolution.
+	Binning int `mapstructure:"binning"           json:"binning"`
+	// White balance red component (ZWO: 0-99, libcamera: 0.0-10.0).
+	WBRed float64 `mapstructure:"wb_red"            json:"wb_red"`
+	// White balance blue component.
+	WBBlue float64 `mapstructure:"wb_blue"           json:"wb_blue"`
+	// AWB enables auto white balance (libcamera only).
+	AWB bool `mapstructure:"awb"               json:"awb"`
+	// ImageType: "jpg" or "png"
+	ImageType string `mapstructure:"image_type"        json:"image_type"`
+	// Quality: JPEG quality 1-100 (default 95).
+	Quality int `mapstructure:"quality"           json:"quality"`
+	// SkipFrames: number of frames to discard after mode transition.
+	SkipFrames int `mapstructure:"skip_frames"       json:"skip_frames"`
+	// Denoise: "off", "cdn_off", "cdn_fast", "cdn_hq" (libcamera only).
+	Denoise string `mapstructure:"denoise"           json:"denoise"`
+	// Cooler settings (ZWO cameras with cooling).
+	CoolerEnabled bool    `mapstructure:"cooler_enabled"    json:"cooler_enabled"`
+	CoolerTarget  float64 `mapstructure:"cooler_target"     json:"cooler_target"`
+}
+
+// OutputConfig controls where and how images are saved.
+type OutputConfig struct {
+	// Directory is the base output directory. Images are saved to <dir>/YYYY-MM-DD/.
+	Directory string `mapstructure:"directory"        json:"directory"`
+	// FilenamePrefix for saved images (default "allsky").
+	FilenamePrefix string `mapstructure:"filename_prefix"  json:"filename_prefix"`
+	// DaysToKeep: delete directories older than this. 0 = keep forever.
+	DaysToKeep int `mapstructure:"days_to_keep"     json:"days_to_keep"`
+	// Overlay enables timestamp/metadata text on images.
+	Overlay bool `mapstructure:"overlay"          json:"overlay"`
+	// OverlayFontSize in points (default 24).
+	OverlayFontSize float64 `mapstructure:"overlay_font_size" json:"overlay_font_size"`
+	// Timelapse settings.
+	Timelapse TimelapseConfig `mapstructure:"timelapse"        json:"timelapse"`
+}
+
+// TimelapseConfig controls video generation.
+type TimelapseConfig struct {
+	// Enabled enables timelapse generation at end of night.
+	Enabled bool `mapstructure:"enabled" json:"enabled"`
+	// FPS for the timelapse video (default 25).
+	FPS int `mapstructure:"fps"     json:"fps"`
+	// Bitrate for the video (default "2000k").
+	Bitrate string `mapstructure:"bitrate" json:"bitrate"`
+	// Codec: "libx264" (default), "libx265".
+	Codec string `mapstructure:"codec"   json:"codec"`
+}
+
+// UploadConfig controls how images/videos are uploaded.
+type UploadConfig struct {
+	// UploadImages uploads each captured image (can be bandwidth-heavy).
+	UploadImages bool `mapstructure:"upload_images"    json:"upload_images"`
+	// UploadTimelapse uploads the timelapse video at end of night.
+	UploadTimelapse bool `mapstructure:"upload_timelapse" json:"upload_timelapse"`
+	// S3 configuration.
+	S3 S3Config `mapstructure:"s3"               json:"s3"`
+	// HTTP upload configuration.
+	HTTP HTTPConfig `mapstructure:"http"             json:"http"`
+}
+
+// S3Config for AWS S3 uploads.
+type S3Config struct {
+	Enabled  bool   `mapstructure:"enabled"  json:"enabled"`
+	Bucket   string `mapstructure:"bucket"   json:"bucket"`
+	Region   string `mapstructure:"region"   json:"region"`
+	Prefix   string `mapstructure:"prefix"   json:"prefix"`
+	Endpoint string `mapstructure:"endpoint" json:"endpoint"`
+}
+
+// HTTPConfig for HTTP POST uploads.
+type HTTPConfig struct {
+	Enabled bool   `mapstructure:"enabled"                json:"enabled"`
+	URL     string `mapstructure:"url"                    json:"url"`
+	// Authorization header value (e.g., "Bearer <token>").
+	Authorization string `mapstructure:"authorization" json:"authorization,omitempty"`
+}
+
+// DarkConfig controls dark frame capture and subtraction.
+type DarkConfig struct {
+	// Enabled enables dark frame subtraction during capture.
+	Enabled bool `mapstructure:"enabled"   json:"enabled"`
+	// Directory where dark frames are stored.
+	Directory string `mapstructure:"directory" json:"directory"`
+	// Count: number of dark frames to average when capturing darks.
+	Count int `mapstructure:"count"     json:"count"`
+}
+
+// Load reads configuration from file and environment, applying defaults.
+func Load(configPath string) (*Config, error) {
+	v := viper.New()
+	setDefaults(v)
+
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+	} else {
+		v.SetConfigName("nightsky")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("$HOME/.config/nightsky")
+		v.AddConfigPath("/etc/nightsky")
+	}
+
+	v.SetEnvPrefix("NIGHTSKY")
+	v.AutomaticEnv()
+
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("reading config: %w", err)
+		}
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("parsing config: %w", err)
+	}
+
+	if err := validate(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func setDefaults(v *viper.Viper) {
+	v.SetDefault("camera.type", "libcamera")
+	v.SetDefault("camera.index", 0)
+	v.SetDefault("camera.device", 0)
+	v.SetDefault("camera.usb_bandwidth", 80)
+	v.SetDefault("camera.flip", 0)
+
+	v.SetDefault("location.latitude", 0.0)
+	v.SetDefault("location.longitude", 0.0)
+	v.SetDefault("location.angle", -6.0)
+
+	// Day defaults
+	v.SetDefault("day.exposure", "1ms")
+	v.SetDefault("day.max_exposure", "100ms")
+	v.SetDefault("day.gain", 1.0)
+	v.SetDefault("day.max_gain", 10.0)
+	v.SetDefault("day.auto_exposure", true)
+	v.SetDefault("day.target_brightness", 160.0)
+	v.SetDefault("day.delay", "5s")
+	v.SetDefault("day.binning", 1)
+	v.SetDefault("day.wb_red", 52)
+	v.SetDefault("day.wb_blue", 90)
+	v.SetDefault("day.awb", true)
+	v.SetDefault("day.image_type", "jpg")
+	v.SetDefault("day.quality", 95)
+	v.SetDefault("day.skip_frames", 5)
+	v.SetDefault("day.denoise", "cdn_fast")
+
+	// Night defaults
+	v.SetDefault("night.exposure", "10s")
+	v.SetDefault("night.max_exposure", "60s")
+	v.SetDefault("night.gain", 200.0)
+	v.SetDefault("night.max_gain", 400.0)
+	v.SetDefault("night.auto_exposure", true)
+	v.SetDefault("night.target_brightness", 90.0)
+	v.SetDefault("night.delay", "0s")
+	v.SetDefault("night.binning", 1)
+	v.SetDefault("night.wb_red", 52)
+	v.SetDefault("night.wb_blue", 90)
+	v.SetDefault("night.awb", false)
+	v.SetDefault("night.image_type", "png")
+	v.SetDefault("night.quality", 95)
+	v.SetDefault("night.skip_frames", 1)
+	v.SetDefault("night.denoise", "off")
+
+	v.SetDefault("output.directory", "./output")
+	v.SetDefault("output.filename_prefix", "allsky")
+	v.SetDefault("output.days_to_keep", 14)
+	v.SetDefault("output.overlay", true)
+	v.SetDefault("output.overlay_font_size", 24.0)
+	v.SetDefault("output.timelapse.enabled", true)
+	v.SetDefault("output.timelapse.fps", 25)
+	v.SetDefault("output.timelapse.bitrate", "2000k")
+	v.SetDefault("output.timelapse.codec", "libx264")
+
+	v.SetDefault("upload.upload_images", false)
+	v.SetDefault("upload.upload_timelapse", true)
+	v.SetDefault("upload.s3.enabled", false)
+	v.SetDefault("upload.s3.region", "us-east-1")
+	v.SetDefault("upload.s3.prefix", "nightsky")
+	v.SetDefault("upload.http.enabled", false)
+
+	v.SetDefault("dark.enabled", false)
+	v.SetDefault("dark.directory", "./darks")
+	v.SetDefault("dark.count", 5)
+}
+
+func validate(cfg *Config) error {
+	switch cfg.Camera.Type {
+	case "zwo", "libcamera":
+	default:
+		return fmt.Errorf("camera.type must be 'zwo' or 'libcamera', got %q", cfg.Camera.Type)
+	}
+
+	if cfg.Location.Latitude < -90 || cfg.Location.Latitude > 90 {
+		return fmt.Errorf("location.latitude must be between -90 and 90")
+	}
+	if cfg.Location.Longitude < -180 || cfg.Location.Longitude > 180 {
+		return fmt.Errorf("location.longitude must be between -180 and 180")
+	}
+
+	for _, mode := range []struct {
+		name string
+		cfg  ModeConfig
+	}{{"day", cfg.Day}, {"night", cfg.Night}} {
+		if mode.cfg.Exposure < 0 {
+			return fmt.Errorf("%s.exposure must be non-negative", mode.name)
+		}
+		if mode.cfg.Gain < 0 {
+			return fmt.Errorf("%s.gain must be non-negative", mode.name)
+		}
+		if mode.cfg.Binning != 0 && mode.cfg.Binning != 1 && mode.cfg.Binning != 2 && mode.cfg.Binning != 4 {
+			return fmt.Errorf("%s.binning must be 1, 2, or 4", mode.name)
+		}
+		if mode.cfg.Quality < 1 || mode.cfg.Quality > 100 {
+			return fmt.Errorf("%s.quality must be between 1 and 100", mode.name)
+		}
+	}
+
+	return nil
+}

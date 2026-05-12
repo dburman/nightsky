@@ -1,0 +1,93 @@
+# Multi-stage cross-compilation Dockerfile for Raspberry Pi targets.
+# Produces a statically linked nightsky binary for linux/arm64 or linux/arm/v7.
+#
+# Usage:
+#   docker build -f Dockerfile.build --target export --output bin/ .
+#   docker build -f Dockerfile.build --target export --output bin/ --build-arg TARGETARCH=arm .
+#
+# With ZWO ASI SDK support:
+#   docker build -f Dockerfile.build --target export --output bin/ --build-arg BUILD_TAGS=zwo .
+
+# ---------- stage 1: build ----------
+FROM --platform=$BUILDPLATFORM golang:1.22-bookworm AS builder
+
+ARG TARGETPLATFORM
+ARG TARGETOS=linux
+ARG TARGETARCH=arm64
+ARG TARGETVARIANT
+ARG BUILD_TAGS=""
+
+# Install cross-compilation toolchains and ZWO SDK dependencies.
+RUN dpkg --add-architecture arm64 && \
+    dpkg --add-architecture armhf && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu \
+        g++-aarch64-linux-gnu \
+        gcc-arm-linux-gnueabihf \
+        g++-arm-linux-gnueabihf \
+        libusb-1.0-0-dev:arm64 \
+        libusb-1.0-0-dev:armhf \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Determine the correct CC for the target architecture.
+# arm64 = aarch64-linux-gnu-gcc, arm (v7/v6) = arm-linux-gnueabihf-gcc
+RUN <<'EOF'
+set -e
+case "${TARGETARCH}" in
+  arm64)
+    export CC=aarch64-linux-gnu-gcc
+    export CXX=aarch64-linux-gnu-g++
+    export GOARCH=arm64
+    ;;
+  arm)
+    export CC=arm-linux-gnueabihf-gcc
+    export CXX=arm-linux-gnueabihf-g++
+    export GOARCH=arm
+    case "${TARGETVARIANT}" in
+      v6) export GOARM=6 ;;
+      *)  export GOARM=7 ;;
+    esac
+    ;;
+  *)
+    export GOARCH=${TARGETARCH}
+    ;;
+esac
+
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS="-X github.com/dburman/nightsky/internal/config.Version=${VERSION} -s -w"
+
+TAG_FLAG=""
+if [ -n "${BUILD_TAGS}" ]; then
+  TAG_FLAG="-tags ${BUILD_TAGS}"
+fi
+
+CGO_ENABLED=1 GOOS=linux GOARCH=${GOARCH} \
+  go build ${TAG_FLAG} \
+    -ldflags "${LDFLAGS}" \
+    -o /out/nightsky \
+    ./cmd/nightsky
+EOF
+
+# ---------- stage 2: export the binary ----------
+FROM scratch AS export
+COPY --from=builder /out/nightsky /nightsky
+
+# ---------- stage 3: minimal runtime image (optional) ----------
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/nightsky /usr/local/bin/nightsky
+COPY configs/nightsky.example.yaml /etc/nightsky/nightsky.yaml
+
+ENTRYPOINT ["nightsky"]
+CMD ["capture", "--config", "/etc/nightsky/nightsky.yaml"]

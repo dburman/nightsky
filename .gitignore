@@ -1,0 +1,6 @@
+bin/
+output/
+darks/
+*.tmp
+nightsky.yaml
+.env
