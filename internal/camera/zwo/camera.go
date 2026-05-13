@@ -246,7 +246,7 @@ readData:
 	}
 
 	c.logger.Info("capture complete",
-		"exposure", exposureDuration.Round(time.Millisecond),
+		"exposure", exposureDuration,
 		"gain", settings.Gain,
 		"temp", fmt.Sprintf("%.1f°C", temp),
 		"mean", fmt.Sprintf("%.1f", meanBrightness),

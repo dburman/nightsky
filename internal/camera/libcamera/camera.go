@@ -166,7 +166,7 @@ func (c *Camera) Capture(ctx context.Context, settings camera.CaptureSettings) (
 	}
 
 	c.logger.Info("capture complete",
-		"exposure", result.Meta.Exposure.Round(time.Millisecond),
+		"exposure", result.Meta.Exposure,
 		"gain", result.Meta.Gain,
 		"temp", fmt.Sprintf("%.1f°C", result.Meta.Temperature),
 		"mean", fmt.Sprintf("%.1f", meanBrightness),
