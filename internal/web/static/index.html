@@ -890,17 +890,18 @@ function renderImages(container, images) {
   let loaded = 0;
 
   function appendPage() {
-    const slice = images.slice(loaded, loaded + PAGE_SIZE);
+    const pageStart = loaded; // snapshot before incrementing
+    const slice = images.slice(pageStart, pageStart + PAGE_SIZE);
     slice.forEach((img, i) => {
       const cell = document.createElement('div');
       cell.className = 'img-cell';
-      cell.onclick = () => lbOpen(loaded + i);
+      cell.onclick = () => lbOpen(pageStart + i);
       cell.innerHTML = `
         <div class="img-placeholder" data-src="${esc(img.thumb_url)}"></div>
         <div class="img-overlay">${esc(img.time || '')}</div>`;
       grid.appendChild(cell);
     });
-    loaded += slice.length;
+    loaded = pageStart + slice.length;
 
     // Wire up lazy-load observer for the newly added placeholders.
     if (thumbObs) {
