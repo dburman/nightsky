@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/dburman/nightsky/internal/astro"
@@ -334,6 +334,7 @@ func ListDateDirs(outputDir string) ([]string, error) {
 		}
 	}
 
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	slices.Sort(dirs)
+	slices.Reverse(dirs)
 	return dirs, nil
 }

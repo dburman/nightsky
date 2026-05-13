@@ -11,7 +11,7 @@
 # The VERSION build arg is set by CI; omit it for a "dev" binary.
 
 # ── stage 1: build ────────────────────────────────────────────────────────────
-FROM golang:1.22-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 ARG VERSION=dev
 ARG BUILD_TAGS=""

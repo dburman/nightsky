@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,8 +120,11 @@ func (s *Server) handleCaptures(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sort newest-first.
-	sort.Slice(captures, func(i, j int) bool {
-		return captures[i].Date > captures[j].Date
+	slices.SortFunc(captures, func(a, b captureEntry) int {
+		if a.Date > b.Date {
+			return -1
+		}
+		return 1
 	})
 
 	s.writeJSON(w, captures)
@@ -200,8 +203,11 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sort images by name (which sorts by timestamp).
-	sort.Slice(images, func(i, j int) bool {
-		return images[i].Name < images[j].Name
+	slices.SortFunc(images, func(a, b imageEntry) int {
+		if a.Name < b.Name {
+			return -1
+		}
+		return 1
 	})
 
 	resp := dateImagesResponse{

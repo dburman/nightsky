@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -41,7 +41,7 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 			files = append(files, filepath.Join(dateDir, e.Name()))
 		}
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	if len(files) == 0 {
 		return "", fmt.Errorf("no images found in %s", dateDir)

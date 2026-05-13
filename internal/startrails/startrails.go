@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -35,7 +35,7 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 			files = append(files, filepath.Join(dateDir, e.Name()))
 		}
 	}
-	sort.Strings(files)
+	slices.Sort(files)
 
 	if len(files) == 0 {
 		return "", fmt.Errorf("no images found in %s", dateDir)
@@ -116,18 +116,12 @@ func maxBlend(dst *image.RGBA, src image.Image) {
 			dr, dg, db, da := dst.At(x, y).RGBA()
 			sr, sg, sb, sa := src.At(x, y).RGBA()
 			dst.Set(x, y, color.RGBA{
-				R: uint8(max16(dr, sr) >> 8),
-				G: uint8(max16(dg, sg) >> 8),
-				B: uint8(max16(db, sb) >> 8),
-				A: uint8(max16(da, sa) >> 8),
+				R: uint8(max(dr, sr) >> 8),
+				G: uint8(max(dg, sg) >> 8),
+				B: uint8(max(db, sb) >> 8),
+				A: uint8(max(da, sa) >> 8),
 			})
 		}
 	}
 }
 
-func max16(a, b uint32) uint32 {
-	if a > b {
-		return a
-	}
-	return b
-}
