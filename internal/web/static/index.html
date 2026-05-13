@@ -347,6 +347,19 @@ table.kv td.v {
 }
 .empty-icon { font-size: 36px; margin-bottom: 12px; }
 
+.load-more-btn {
+  display: block;
+  margin: 20px auto;
+  padding: 10px 28px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+}
+.load-more-btn:hover { border-color: var(--accent); color: var(--accent); }
+
 /* Video pane */
 .video-wrap {
   display: flex;
@@ -365,6 +378,29 @@ table.kv td.v {
 .video-placeholder {
   padding: 48px 0;
   text-align: center;
+  color: var(--muted);
+}
+
+.keogram-wrap {
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.keogram-wrap img {
+  width: 100%;
+  max-width: 1200px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  image-rendering: pixelated;
+}
+.keogram-label {
+  width: 100%;
+  max-width: 1200px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -683,7 +719,7 @@ async function loadConfig() {
 /* ── Captures ───────────────────────────────────────────── */
 let capturesList = [];
 let activeDate   = null;
-let activeSub    = 'images';
+let activeSub    = 'video';
 let dateImages   = {};  // cache: date -> {images, video}
 
 async function loadCaptures(force) {
@@ -724,16 +760,20 @@ function renderCaptures() {
     return `<button class="pill ${active}" onclick="selectDate('${esc(c.date)}')">${esc(c.date)}<span class="pill-count">${c.image_count}</span></button>`;
   }).join('');
 
-  const subImages = activeSub === 'images' ? 'active' : '';
-  const subVideo  = activeSub === 'video'  ? 'active' : '';
+  const subVideo      = activeSub === 'video'      ? 'active' : '';
+  const subKeogram    = activeSub === 'keogram'    ? 'active' : '';
+  const subStartrails = activeSub === 'startrails' ? 'active' : '';
+  const subImages     = activeSub === 'images'     ? 'active' : '';
 
   document.getElementById('captures-content').innerHTML = `
     <div class="date-pills-wrap">
       <div class="date-pills">${pills}</div>
     </div>
     <div class="sub-tabs">
-      <button class="${subImages}" onclick="selectSub('images')">Images</button>
-      <button class="${subVideo}"  onclick="selectSub('video')">Video</button>
+      <button class="${subVideo}"      onclick="selectSub('video')">Video</button>
+      <button class="${subKeogram}"    onclick="selectSub('keogram')">Keogram</button>
+      <button class="${subStartrails}" onclick="selectSub('startrails')">Star Trails</button>
+      <button class="${subImages}"     onclick="selectSub('images')">Images</button>
     </div>
     <div id="date-content"><div class="spinner"></div></div>
   `;
@@ -781,6 +821,10 @@ function renderDateContent(date) {
 
   if (activeSub === 'images') {
     renderImages(el, data.images || []);
+  } else if (activeSub === 'keogram') {
+    renderKeogram(el, data.keogram, date);
+  } else if (activeSub === 'startrails') {
+    renderStarTrails(el, data.startrails, date);
   } else {
     renderVideo(el, data.video, date);
   }
@@ -790,39 +834,29 @@ function renderDateContent(date) {
 let lbImages = [];
 let lbIdx    = 0;
 
-function renderImages(container, images) {
-  if (images.length === 0) {
-    container.innerHTML = `<div class="empty"><div class="empty-icon">📷</div>No images for this date.</div>`;
-    return;
-  }
+const PAGE_SIZE = 50;
 
-  lbImages = images;
+// Shared IntersectionObserver instance — recreated per renderImages call.
+let thumbObs = null;
 
-  const cells = images.map((img, i) => `
-    <div class="img-cell" onclick="lbOpen(${i})">
-      <div class="img-placeholder" data-src="${esc(img.thumb_url)}" data-idx="${i}"></div>
-      <div class="img-overlay">${esc(img.time || '')}</div>
-    </div>
-  `).join('');
+function observeThumb(el) {
+  if (!thumbObs) return;
+  thumbObs.observe(el);
+}
 
-  container.innerHTML = `<div class="img-grid">${cells}</div>`;
-
-  // Lazy-load via IntersectionObserver.
-  // Insert the <img> into the DOM *before* setting src so the browser
-  // sees it as in-viewport and fetches immediately.
-  const obs = new IntersectionObserver((entries) => {
+function attachThumbObserver(container) {
+  thumbObs = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (!entry.isIntersecting) return;
       const ph = entry.target;
       const src = ph.dataset.src;
       if (!src) return;
-      obs.unobserve(ph);
+      thumbObs.unobserve(ph);
 
       const imgEl = document.createElement('img');
       imgEl.alt = '';
       imgEl.onload  = () => imgEl.classList.add('loaded');
       imgEl.onerror = () => {
-        // Restore a static placeholder on failure.
         const err = document.createElement('div');
         err.className = 'img-placeholder';
         err.style.cssText = 'animation:none;background:var(--surface)';
@@ -833,7 +867,65 @@ function renderImages(container, images) {
     });
   }, { rootMargin: '200px' });
 
-  container.querySelectorAll('[data-src]').forEach(el => obs.observe(el));
+  container.querySelectorAll('[data-src]').forEach(el => thumbObs.observe(el));
+}
+
+function renderImages(container, images) {
+  if (images.length === 0) {
+    container.innerHTML = `<div class="empty"><div class="empty-icon">📷</div>No images for this date.</div>`;
+    return;
+  }
+
+  lbImages = images;
+  thumbObs = null;
+
+  const grid = document.createElement('div');
+  grid.className = 'img-grid';
+  container.innerHTML = '';
+  container.appendChild(grid);
+
+  let loaded = 0;
+
+  function appendPage() {
+    const slice = images.slice(loaded, loaded + PAGE_SIZE);
+    slice.forEach((img, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'img-cell';
+      cell.onclick = () => lbOpen(loaded + i);
+      cell.innerHTML = `
+        <div class="img-placeholder" data-src="${esc(img.thumb_url)}"></div>
+        <div class="img-overlay">${esc(img.time || '')}</div>`;
+      grid.appendChild(cell);
+    });
+    loaded += slice.length;
+
+    // Wire up lazy-load observer for the newly added placeholders.
+    if (thumbObs) {
+      grid.querySelectorAll('[data-src]').forEach(el => {
+        if (!el.dataset.observed) { el.dataset.observed = '1'; thumbObs.observe(el); }
+      });
+    } else {
+      attachThumbObserver(grid);
+      // Mark all initial placeholders so future pages don't double-observe.
+      grid.querySelectorAll('[data-src]').forEach(el => el.dataset.observed = '1');
+    }
+
+    // Add / update "Load more" button.
+    let btn = container.querySelector('.load-more-btn');
+    if (loaded < images.length) {
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.className = 'load-more-btn';
+        btn.onclick = appendPage;
+        container.appendChild(btn);
+      }
+      btn.textContent = `Load more (${images.length - loaded} remaining)`;
+    } else if (btn) {
+      btn.remove();
+    }
+  }
+
+  appendPage();
 }
 
 function renderVideo(container, videoURL, date) {
@@ -848,6 +940,33 @@ function renderVideo(container, videoURL, date) {
         Your browser does not support HTML5 video.
       </video>
       <div style="color:var(--muted);font-size:12px;font-family:var(--mono)">${esc(videoURL)}</div>
+    </div>
+  `;
+}
+
+function renderKeogram(container, keogramURL, date) {
+  if (!keogramURL) {
+    container.innerHTML = `<div class="video-placeholder"><div class="empty-icon">🌌</div>No keogram for ${esc(date)}.<br><span style="font-size:12px;color:var(--muted)">Generated automatically at end of night.</span></div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="keogram-wrap">
+      <img src="${esc(keogramURL)}" alt="Keogram for ${esc(date)}">
+      <div class="keogram-label">
+        <span>← Night start</span><span>Night end →</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderStarTrails(container, url, date) {
+  if (!url) {
+    container.innerHTML = `<div class="video-placeholder"><div class="empty-icon">✨</div>No star trails for ${esc(date)}.<br><span style="font-size:12px;color:var(--muted)">Generated automatically at end of night.</span></div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="keogram-wrap">
+      <img src="${esc(url)}" alt="Star trails for ${esc(date)}">
     </div>
   `;
 }

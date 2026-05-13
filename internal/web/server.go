@@ -135,9 +135,11 @@ type imageEntry struct {
 }
 
 type dateImagesResponse struct {
-	Date   string       `json:"date"`
-	Images []imageEntry `json:"images"`
-	Video  string       `json:"video,omitempty"`
+	Date       string       `json:"date"`
+	Images     []imageEntry `json:"images"`
+	Video      string       `json:"video,omitempty"`
+	Keogram    string       `json:"keogram,omitempty"`
+	StarTrails string       `json:"startrails,omitempty"`
 }
 
 func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +158,8 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 
 	var images []imageEntry
 	var videoURL string
+	var keogramURL string
+	var startrailsURL string
 
 	for _, f := range files {
 		if f.IsDir() {
@@ -169,12 +173,22 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		if strings.HasPrefix(lower, "keogram-") && strings.HasSuffix(lower, ".jpg") {
+			keogramURL = "/output/" + date + "/" + name
+			continue
+		}
+
+		if strings.HasPrefix(lower, "startrails-") && strings.HasSuffix(lower, ".jpg") {
+			startrailsURL = "/output/" + date + "/" + name
+			continue
+		}
+
 		if !strings.HasSuffix(lower, ".jpg") && !strings.HasSuffix(lower, ".jpeg") && !strings.HasSuffix(lower, ".png") {
 			continue
 		}
 
 		imgURL := "/output/" + date + "/" + name
-		thumbURL := imgURL + "?w=320"
+		thumbURL := imgURL + "?w=160"
 		timeStr := extractTime(name)
 
 		images = append(images, imageEntry{
@@ -191,9 +205,11 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 	})
 
 	resp := dateImagesResponse{
-		Date:   date,
-		Images: images,
-		Video:  videoURL,
+		Date:       date,
+		Images:     images,
+		Video:      videoURL,
+		Keogram:    keogramURL,
+		StarTrails: startrailsURL,
 	}
 	s.writeJSON(w, resp)
 }

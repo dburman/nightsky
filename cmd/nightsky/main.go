@@ -12,6 +12,8 @@ import (
 	"github.com/dburman/nightsky/internal/camera/libcamera"
 	"github.com/dburman/nightsky/internal/capture"
 	"github.com/dburman/nightsky/internal/config"
+	"github.com/dburman/nightsky/internal/keogram"
+	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
 	"github.com/dburman/nightsky/internal/upload"
 	"github.com/spf13/cobra"
@@ -190,6 +192,16 @@ func captureCmd() *cobra.Command {
 							}()
 						}
 					}
+				}
+
+				// Generate keogram.
+				if _, err := keogram.Generate(ctx, dateDir, logger); err != nil {
+					logger.Error("keogram generation failed", "error", err)
+				}
+
+				// Generate star trails.
+				if _, err := startrails.Generate(ctx, dateDir, logger); err != nil {
+					logger.Error("star trails generation failed", "error", err)
 				}
 
 				// Clean old data. Space-based cleanup takes precedence over
