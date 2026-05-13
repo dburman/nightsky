@@ -1,5 +1,5 @@
 bin/
-nightsky
+/nightsky
 output/
 darks/
 *.mp4

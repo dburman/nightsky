@@ -40,12 +40,13 @@ type Loop struct {
 	logger  *slog.Logger
 
 	// State.
-	mode         Mode
-	exposureCtrl *ExposureController
-	darkMgr      *DarkFrameManager
-	currentDark  image.Image
-	frameCount   int64
-	skipRemaining int
+	mode            Mode
+	nightSessionDir string // set when night begins, cleared at dawn
+	exposureCtrl    *ExposureController
+	darkMgr         *DarkFrameManager
+	currentDark     image.Image
+	frameCount      int64
+	skipRemaining   int
 
 	// Callbacks for upload integration.
 	OnImageSaved func(path string, meta camera.CaptureMeta)
@@ -82,9 +83,6 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.logger.Info("initial mode", "mode", l.mode)
 	l.initMode()
 
-	lastMode := l.mode
-	var lastDateDir string
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -98,17 +96,16 @@ func (l *Loop) Run(ctx context.Context) error {
 		if newMode != l.mode {
 			l.logger.Info("mode transition", "from", l.mode, "to", newMode)
 
-			// End-of-night processing.
+			// End-of-night processing: fire before clearing nightSessionDir.
 			if l.mode == ModeNight && newMode == ModeDay {
-				if lastDateDir != "" && l.OnNightEnd != nil {
-					l.OnNightEnd(lastDateDir)
+				if l.nightSessionDir != "" && l.OnNightEnd != nil {
+					l.OnNightEnd(filepath.Join(l.cfg.Output.Directory, l.nightSessionDir))
 				}
+				l.nightSessionDir = ""
 			}
 
-			lastMode = l.mode
 			l.mode = newMode
 			l.initMode()
-			_ = lastMode
 		}
 
 		// Get mode settings.
@@ -135,8 +132,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			})
 		}
 
-		// Capture frame.
-		captureCtx, cancel := context.WithTimeout(ctx, settings.Exposure+60*time.Second)
+		// Capture frame. Grace period covers rpicam-still startup (3-10s on a Pi),
+		// the shutter open time, and image encoding before the context fires.
+		captureCtx, cancel := context.WithTimeout(ctx, settings.Exposure+120*time.Second)
 		result, err := l.cam.Capture(captureCtx, settings)
 		cancel()
 
@@ -170,14 +168,20 @@ func (l *Loop) Run(ctx context.Context) error {
 		overlayCfg.FontSize = l.cfg.Output.OverlayFontSize
 		processedImg = imgutil.ApplyOverlay(processedImg, result.Meta, overlayCfg)
 
-		// Save image.
-		dateDir := time.Now().Format("2006-01-02")
-		outputDir := filepath.Join(l.cfg.Output.Directory, dateDir)
+		// Save image. Night images all go into the folder named after the
+		// night's start date so midnight crossings don't split the dataset.
+		dateLabel := time.Now().Format("2006-01-02")
+		if l.mode == ModeNight {
+			if l.nightSessionDir == "" {
+				l.nightSessionDir = dateLabel
+			}
+			dateLabel = l.nightSessionDir
+		}
+		outputDir := filepath.Join(l.cfg.Output.Directory, dateLabel)
 		if err := os.MkdirAll(outputDir, 0755); err != nil {
 			l.logger.Error("create output dir", "error", err)
 			continue
 		}
-		lastDateDir = outputDir
 
 		filename := fmt.Sprintf("%s-%s.%s",
 			l.cfg.Output.FilenamePrefix,
@@ -242,6 +246,10 @@ func (l *Loop) modeConfig() config.ModeConfig {
 
 // initMode initializes state for a new mode.
 func (l *Loop) initMode() {
+	if l.mode == ModeNight && l.nightSessionDir == "" {
+		l.nightSessionDir = time.Now().Format("2006-01-02")
+	}
+
 	modeCfg := l.modeConfig()
 
 	// Initialize auto-exposure controller.

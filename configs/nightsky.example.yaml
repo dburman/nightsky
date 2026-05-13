@@ -65,8 +65,16 @@ output:
   directory: ./output
   # Filename prefix for images
   filename_prefix: allsky
-  # Auto-delete directories older than this many days (0 = keep forever)
-  days_to_keep: 14
+  # Disk space cleanup (choose one strategy, or leave both at 0 to keep everything):
+  #
+  # Option A — space-based (recommended): delete oldest nights first, only when
+  # the disk is getting full. Today's directory is never removed.
+  # Example: keep at least 5 GB free at all times.
+  min_free_gb: 0
+  #
+  # Option B — time-based: delete directories older than N days regardless of
+  # available space. 0 = disabled.
+  days_to_keep: 0
   # Overlay timestamp and metadata on images
   overlay: true
   overlay_font_size: 24

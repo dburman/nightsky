@@ -304,8 +304,10 @@ table.kv td.v {
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.2s;
+  opacity: 0;
+  transition: transform 0.2s, opacity 0.3s;
 }
+.img-cell img.loaded { opacity: 1; }
 .img-cell:hover img { transform: scale(1.04); }
 
 .img-overlay {
@@ -805,7 +807,9 @@ function renderImages(container, images) {
 
   container.innerHTML = `<div class="img-grid">${cells}</div>`;
 
-  // Lazy-load via IntersectionObserver
+  // Lazy-load via IntersectionObserver.
+  // Insert the <img> into the DOM *before* setting src so the browser
+  // sees it as in-viewport and fetches immediately.
   const obs = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
       if (!entry.isIntersecting) return;
@@ -815,11 +819,17 @@ function renderImages(container, images) {
       obs.unobserve(ph);
 
       const imgEl = document.createElement('img');
-      imgEl.loading = 'lazy';
-      imgEl.alt     = '';
-      imgEl.onload  = () => { ph.replaceWith(imgEl); };
-      imgEl.onerror = () => { ph.style.background = 'var(--surface)'; };
-      imgEl.src     = src;
+      imgEl.alt = '';
+      imgEl.onload  = () => imgEl.classList.add('loaded');
+      imgEl.onerror = () => {
+        // Restore a static placeholder on failure.
+        const err = document.createElement('div');
+        err.className = 'img-placeholder';
+        err.style.cssText = 'animation:none;background:var(--surface)';
+        imgEl.replaceWith(err);
+      };
+      ph.replaceWith(imgEl); // in DOM before src so fetch starts immediately
+      imgEl.src = src;
     });
   }, { rootMargin: '200px' });
 

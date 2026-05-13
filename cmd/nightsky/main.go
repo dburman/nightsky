@@ -192,8 +192,14 @@ func captureCmd() *cobra.Command {
 					}
 				}
 
-				// Clean old data.
-				if cfg.Output.DaysToKeep > 0 {
+				// Clean old data. Space-based cleanup takes precedence over
+				// time-based: only delete when the disk is actually getting full.
+				switch {
+				case cfg.Output.MinFreeGB > 0:
+					if err := capture.CleanForSpace(cfg.Output.Directory, cfg.Output.MinFreeGB, logger); err != nil {
+						logger.Error("space-based cleanup failed", "error", err)
+					}
+				case cfg.Output.DaysToKeep > 0:
 					if err := capture.CleanOldData(cfg.Output.Directory, cfg.Output.DaysToKeep, logger); err != nil {
 						logger.Error("cleanup failed", "error", err)
 					}

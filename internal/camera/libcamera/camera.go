@@ -102,12 +102,10 @@ func (c *Camera) Capture(ctx context.Context, settings camera.CaptureSettings) (
 
 	c.logger.Debug("capture command", "bin", c.stillBin, "args", strings.Join(args, " "))
 
-	// Use timeout context: exposure time + 30s grace.
-	timeout := settings.Exposure + 30*time.Second
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, c.stillBin, args...)
+	// Use the caller's context directly. The capture loop already sets a
+	// deadline of exposure+120s, which covers slow rpicam-still startup on
+	// a loaded Pi (typically 3-10s), the shutter open time, and PNG encoding.
+	cmd := exec.CommandContext(ctx, c.stillBin, args...)
 	cmd.Env = append(os.Environ(), "LIBCAMERA_LOG_LEVELS=ERROR,FATAL")
 
 	var stderr bytes.Buffer
