@@ -25,7 +25,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 
 ### Requirements (build)
 
-- **Go 1.22+**
+- **Go 1.26+**
 - **Docker** (optional, for cross-compilation without a local toolchain)
 
 ### Build from source
