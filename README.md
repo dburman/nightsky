@@ -12,12 +12,14 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Auto-exposure** — Logarithmic exposure level algorithm that adjusts exposure and gain to maintain target brightness, with anti-oscillation detection
 - **Dark frame subtraction** — Capture, average, and subtract calibration frames to remove hot pixels and fixed-pattern noise
 - **Timelapse generation** — Assembles each night's images into an MP4 video via ffmpeg
+- **Keogram** — Single-image summary of the night: center column from each frame stitched left-to-right so clouds, aurora, and milky way transits are visible at a glance
+- **Star trails** — Max-blend stack of all night frames, keeping the brightest pixel seen at each position across the full night
 - **S3 upload** — AWS S3 with support for custom endpoints (Backblaze B2, MinIO, etc.)
 - **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
 - **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
-- **Automatic cleanup** — Configurable retention period removes old capture directories
-- **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date, viewing timelapse videos, and inspecting live configuration — no external dependencies, embedded in the binary
-- **Single binary** — Cross-compiles to ARM64 for Raspberry Pi deployment
+- **Automatic cleanup** — Space-based (`min_free_gb`) or time-based (`days_to_keep`) retention; today's directory is never removed
+- **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date with Video, Keogram, Star Trails, and Images tabs; paginated lazy-loaded thumbnails; no external dependencies, embedded in the binary
+- **Single binary** — Cross-compiles to ARM64/ARMv7 for Raspberry Pi deployment
 
 ---
 
@@ -299,7 +301,9 @@ night:
 output:
   directory: ./output       # Base directory; images saved to <dir>/YYYY-MM-DD/
   filename_prefix: allsky   # Filename prefix for captured images
-  days_to_keep: 14          # Delete directories older than this (0 = keep forever)
+  # Disk space cleanup — choose one strategy (or leave both at 0 to keep everything):
+  min_free_gb: 5            # Space-based (recommended): delete oldest nights when disk is low
+  days_to_keep: 0           # Time-based: delete directories older than N days (0 = disabled)
   overlay: true             # Render timestamp/metadata on images
   overlay_font_size: 24
 
@@ -382,7 +386,9 @@ Global Flags:
 
 ### `nightsky capture`
 
-Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. At the end of each night, generates a timelapse and uploads it if configured.
+Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. All images from a single night session are kept in one directory named after the night's start date, even when captures cross midnight.
+
+At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, and a star-trails image. Uploads and disk cleanup run after.
 
 ```bash
 nightsky capture
@@ -392,7 +398,7 @@ nightsky capture --log-level debug
 
 ### `nightsky serve`
 
-Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected. Open the URL in a browser to browse captures by date, play timelapse videos, and inspect the current configuration.
+Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected. Open the URL in a browser to browse captures by date across four sub-tabs (Video, Keogram, Star Trails, Images) and inspect the current configuration.
 
 ```bash
 nightsky serve
@@ -465,13 +471,17 @@ nightsky clean --days 7
 
 ```
 output/
-├── 2026-03-15/
+├── 2026-03-15/             ← named after the night's start date (survives midnight crossings)
 │   ├── allsky-20260315191503.png
 │   ├── allsky-20260315191513.png
 │   ├── ...
-│   └── timelapse.mp4
+│   ├── timelapse-2026-03-15.mp4
+│   ├── keogram-2026-03-15.jpg
+│   ├── startrails-2026-03-15.jpg
+│   └── .thumbs/            ← auto-generated thumbnail cache (160px JPEG)
+│       ├── allsky-20260315191503_160.jpg
+│       └── ...
 ├── 2026-03-16/
-│   ├── allsky-20260316190012.png
 │   └── ...
 darks/
 ├── dark_10000ms_gain200_bin1.png
@@ -486,11 +496,14 @@ internal/
 ├── camera/            Camera interface
 │   ├── zwo/           ZWO ASI SDK via CGo (build tag: zwo)
 │   └── libcamera/     rpicam-still / libcamera-still CLI wrapper
-├── capture/           Capture loop, auto-exposure, dark frames
+├── capture/           Capture loop, auto-exposure, dark frames, disk cleanup
 ├── astro/             Sun position calculation (NOAA algorithm)
-├── image/             Overlay rendering, image encoding
+├── image/             Overlay rendering, image encoding, thumbnail scaling
+├── keogram/           Keogram generation (parallel image decode, direct pixel access)
+├── startrails/        Star-trails generation (max-blend stack, parallel rows)
 ├── timelapse/         ffmpeg video assembly
 ├── upload/            S3 and HTTP upload backends
+├── web/               Embedded HTTP server and UI (no external dependencies)
 └── config/            YAML configuration with viper
 ```
 
