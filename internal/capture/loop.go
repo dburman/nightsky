@@ -207,6 +207,14 @@ func (l *Loop) Run(ctx context.Context) error {
 			"frame", l.frameCount,
 		)
 
+		// Generate thumbnail from the already-decoded image so the web UI
+		// serves pre-built thumbnails without re-decoding from disk.
+		go func(img image.Image, path string) {
+			if err := imgutil.CacheThumb(img, path); err != nil {
+				l.logger.Debug("thumbnail generation failed", "error", err)
+			}
+		}(processedImg, outputPath)
+
 		// Notify upload handler.
 		if l.OnImageSaved != nil {
 			l.OnImageSaved(outputPath, result.Meta)

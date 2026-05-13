@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/dburman/nightsky/internal/config"
+	imgutil "github.com/dburman/nightsky/internal/image"
 )
 
 //go:embed static/index.html
@@ -191,7 +192,7 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		imgURL := "/output/" + date + "/" + name
-		thumbURL := imgURL + "?w=160"
+		thumbURL := imgURL + "?w=" + strconv.Itoa(imgutil.ThumbWidth)
 		timeStr := extractTime(name)
 
 		images = append(images, imageEntry{
@@ -308,7 +309,7 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 		return
 	}
 
-	scaled := scaleTo(src, width)
+	scaled := imgutil.ScaleTo(src, width)
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: 75}); err != nil {
@@ -324,25 +325,6 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(buf.Bytes())
-}
-
-func scaleTo(src image.Image, targetW int) image.Image {
-	b := src.Bounds()
-	srcW, srcH := b.Dx(), b.Dy()
-	if srcW <= targetW {
-		return src
-	}
-	targetH := srcH * targetW / srcW
-	if targetH < 1 {
-		targetH = 1
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
-	for dy := 0; dy < targetH; dy++ {
-		for dx := 0; dx < targetW; dx++ {
-			dst.Set(dx, dy, src.At(b.Min.X+dx*srcW/targetW, b.Min.Y+dy*srcH/targetH))
-		}
-	}
-	return dst
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, v any) {

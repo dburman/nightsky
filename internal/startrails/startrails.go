@@ -5,14 +5,16 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"image/color"
+	"image/draw"
 	"image/jpeg"
 	_ "image/png"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // Generate builds a star-trails image from all images in dateDir by
@@ -95,33 +97,55 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 	return outPath, nil
 }
 
-// toRGBA converts any image.Image to *image.RGBA.
+// toRGBA converts any image.Image to *image.RGBA using draw.Draw for a
+// single-pass colour-space conversion rather than per-pixel At() calls.
 func toRGBA(src image.Image) *image.RGBA {
+	if r, ok := src.(*image.RGBA); ok {
+		return r
+	}
 	b := src.Bounds()
 	dst := image.NewRGBA(b)
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			dst.Set(x, y, src.At(x, y))
-		}
-	}
+	draw.Draw(dst, b, src, b.Min, draw.Src)
 	return dst
 }
 
-// maxBlend updates dst in-place, keeping the per-channel maximum between
-// dst and src at each pixel.
+// maxBlend updates dst in-place, keeping the per-channel maximum between dst
+// and src at each pixel. Rows are distributed across runtime.NumCPU()
+// goroutines. src is converted to RGBA once before the parallel phase.
 func maxBlend(dst *image.RGBA, src image.Image) {
+	srcRGBA := toRGBA(src)
 	b := dst.Bounds()
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			dr, dg, db, da := dst.At(x, y).RGBA()
-			sr, sg, sb, sa := src.At(x, y).RGBA()
-			dst.Set(x, y, color.RGBA{
-				R: uint8(max(dr, sr) >> 8),
-				G: uint8(max(dg, sg) >> 8),
-				B: uint8(max(db, sb) >> 8),
-				A: uint8(max(da, sa) >> 8),
-			})
-		}
-	}
-}
+	h := b.Dy()
+	w := b.Dx()
 
+	nWorkers := runtime.NumCPU()
+	rowsPerWorker := (h + nWorkers - 1) / nWorkers
+
+	var wg sync.WaitGroup
+	for i := range nWorkers {
+		y0 := b.Min.Y + i*rowsPerWorker
+		y1 := y0 + rowsPerWorker
+		if y1 > b.Max.Y {
+			y1 = b.Max.Y
+		}
+		if y0 >= y1 {
+			break
+		}
+		wg.Add(1)
+		go func(y0, y1 int) {
+			defer wg.Done()
+			for y := y0; y < y1; y++ {
+				di := dst.PixOffset(b.Min.X, y)
+				si := srcRGBA.PixOffset(b.Min.X, y)
+				dp := dst.Pix[di : di+w*4 : di+w*4]
+				sp := srcRGBA.Pix[si : si+w*4 : si+w*4]
+				for j, sv := range sp {
+					if sv > dp[j] {
+						dp[j] = sv
+					}
+				}
+			}
+		}(y0, y1)
+	}
+	wg.Wait()
+}
