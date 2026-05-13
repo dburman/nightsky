@@ -110,7 +110,10 @@ func formatExposure(d time.Duration) string {
 	if d >= time.Second {
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
-	return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000.0)
+	if d >= time.Millisecond {
+		return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000.0)
+	}
+	return fmt.Sprintf("%dµs", d.Microseconds())
 }
 
 // drawSimpleText renders text using a basic pixel-based approach.
