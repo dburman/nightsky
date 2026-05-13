@@ -14,6 +14,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Timelapse generation** — Assembles each night's images into an MP4 video via ffmpeg
 - **Keogram** — Single-image summary of the night: center column from each frame stitched left-to-right so clouds, aurora, and milky way transits are visible at a glance
 - **Star trails** — Max-blend stack of all night frames, keeping the brightest pixel seen at each position across the full night
+- **White balance analysis** — Samples images at end of night, measures mean R/G/B channel values, and writes a plain-text report (`wb-analysis-<date>.txt`) with suggested WB red/blue adjustments
 - **S3 upload** — AWS S3 with support for custom endpoints (Backblaze B2, MinIO, etc.)
 - **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
 - **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
@@ -375,6 +376,7 @@ Commands:
   serve       Start the web UI server
   timelapse   Generate a timelapse video from captured images
   dark        Capture dark frames for calibration
+  analyze     Analyse images and suggest white balance settings
   info        Display camera information
   clean       Remove old capture directories
   version     Print version
@@ -388,7 +390,7 @@ Global Flags:
 
 Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. All images from a single night session are kept in one directory named after the night's start date, even when captures cross midnight.
 
-At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, and a star-trails image. Uploads and disk cleanup run after.
+At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, a star-trails image, and a white balance analysis report. Uploads and disk cleanup run after.
 
 ```bash
 nightsky capture
@@ -465,6 +467,39 @@ nightsky clean
 nightsky clean --days 7
 ```
 
+### `nightsky analyze`
+
+Samples images from a capture directory, measures the mean R/G/B channel values, and writes a white balance suggestion report. Runs automatically at end of night; use this command to re-run analysis manually or on a specific directory.
+
+```bash
+# Most recent session
+nightsky analyze
+
+# Specific directory
+nightsky analyze --dir ./output/2026-03-15
+```
+
+The report is written to `wb-analysis-<date>.txt` in the image directory:
+
+```
+Nightsky White Balance Analysis
+================================
+Generated: 2026-05-13 06:14:22
+Session:   2026-05-12
+
+Night Mode
+----------
+Images analysed: 87 (sampled from 435)
+Mean channels:   R=45.2  G=52.8  B=71.3
+Color cast:      cool/blue (B high, R low)
+
+Current:   WB Red=52  WB Blue=90
+Suggested: WB Red=61  WB Blue=67
+
+  Suggested change: increase WB Red by 9, decrease WB Blue by 23.
+  Apply gradually — one adjustment per night is recommended.
+```
+
 ---
 
 ## Output Structure
@@ -478,6 +513,7 @@ output/
 │   ├── timelapse-2026-03-15.mp4
 │   ├── keogram-2026-03-15.jpg
 │   ├── startrails-2026-03-15.jpg
+│   ├── wb-analysis-2026-03-15.txt
 │   └── .thumbs/            ← auto-generated thumbnail cache (160px JPEG)
 │       ├── allsky-20260315191503_160.jpg
 │       └── ...
@@ -504,6 +540,7 @@ internal/
 ├── timelapse/         ffmpeg video assembly
 ├── upload/            S3 and HTTP upload backends
 ├── web/               Embedded HTTP server and UI (no external dependencies)
+├── whitebalance/      WB channel analysis and per-night adjustment suggestions
 └── config/            YAML configuration with viper
 ```
 
