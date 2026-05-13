@@ -656,11 +656,13 @@ function renderConfig(cfg) {
       <div class="card">
         <div class="card-title">Output</div>
         ${kv([
-          ['Directory',      `<span class="mono">${esc(out.directory)}</span>`],
-          ['Filename Prefix',`<span class="mono">${esc(out.filename_prefix)}</span>`],
-          ['Days to Keep',   out.days_to_keep === 0 ? 'forever' : esc(out.days_to_keep) + ' days'],
-          ['Overlay',        badge(out.overlay)],
-          ['Overlay Font',   esc(out.overlay_font_size) + 'pt'],
+          ['Directory',        `<span class="mono">${esc(out.directory)}</span>`],
+          ['Filename Prefix',  `<span class="mono">${esc(out.filename_prefix)}</span>`],
+          ['Min Free Space',   out.min_free_gb > 0 ? esc(out.min_free_gb) + ' GB' : '—'],
+          ['Days to Keep',     out.days_to_keep > 0 ? esc(out.days_to_keep) + ' days' : '—'],
+          ['Cleanup Strategy', out.min_free_gb > 0 ? 'space-based' : out.days_to_keep > 0 ? 'time-based' : 'disabled'],
+          ['Overlay',          badge(out.overlay)],
+          ['Overlay Font',     esc(out.overlay_font_size) + 'pt'],
         ])}
       </div>
 
@@ -684,8 +686,9 @@ function renderConfig(cfg) {
           ['S3 Region',        up.s3.enabled ? `<span class="mono">${esc(up.s3.region)}</span>` : '—'],
           ['S3 Prefix',        up.s3.enabled ? `<span class="mono">${esc(up.s3.prefix)}</span>` : '—'],
           ['S3 Endpoint',      (up.s3.enabled && up.s3.endpoint) ? `<span class="mono">${esc(up.s3.endpoint)}</span>` : '—'],
-          ['HTTP Enabled',     badge(up.http.enabled)],
-          ['HTTP URL',         up.http.enabled ? `<span class="mono">${esc(up.http.url)}</span>` : '—'],
+          ['HTTP Enabled',        badge(up.http.enabled)],
+          ['HTTP URL',           up.http.enabled ? `<span class="mono">${esc(up.http.url)}</span>` : '—'],
+          ['HTTP Authorization', up.http.enabled ? (up.http.authorization ? badge(true, 'set') : '—') : '—'],
         ])}
       </div>
 
