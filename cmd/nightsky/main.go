@@ -17,6 +17,7 @@ import (
 	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
 	"github.com/dburman/nightsky/internal/upload"
+	"github.com/dburman/nightsky/internal/whitebalance"
 	"github.com/spf13/cobra"
 )
 
@@ -43,6 +44,7 @@ func main() {
 		cleanCmd(),
 		versionCmd(),
 		serveCmd(),
+		analyzeCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -218,6 +220,27 @@ func captureCmd() *cobra.Command {
 				// released their allocations first.
 				if _, err := startrails.Generate(ctx, dateDir, logger); err != nil {
 					logger.Error("star trails generation failed", "error", err)
+				}
+
+				// White balance analysis.
+				wbResults := map[string]*whitebalance.Result{}
+				nightResult, err := whitebalance.Analyze(dateDir, whitebalance.ModeSettings{
+					WBRed:  cfg.Night.WBRed,
+					WBBlue: cfg.Night.WBBlue,
+					AWB:    cfg.Night.AWB,
+					Label:  "Night",
+				})
+				if err != nil {
+					logger.Warn("WB analysis failed", "error", err)
+				} else {
+					wbResults["Night"] = nightResult
+				}
+				if len(wbResults) > 0 {
+					if err := whitebalance.WriteReport(dateDir, wbResults); err != nil {
+						logger.Error("WB report write failed", "error", err)
+					} else {
+						logger.Info("WB analysis written", "dir", dateDir)
+					}
 				}
 
 				// Clean old data. Space-based cleanup takes precedence over
@@ -446,4 +469,71 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("nightsky %s\n", config.Version)
 		},
 	}
+}
+
+// analyzeCmd analyses images in a directory and writes WB suggestions.
+func analyzeCmd() *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:   "analyze",
+		Short: "Analyse images and suggest white balance settings",
+		Long:  "Samples captured images to measure mean R/G/B channel values and suggests WB red/blue adjustments. Results are written to wb-analysis-<date>.txt in the image directory.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			if dir == "" {
+				dirs, err := capture.ListDateDirs(cfg.Output.Directory)
+				if err != nil || len(dirs) == 0 {
+					return fmt.Errorf("no image directories found")
+				}
+				dir = dirs[0]
+				logger.Info("using most recent directory", "dir", dir)
+			}
+
+			results := map[string]*whitebalance.Result{}
+
+			nightResult, err := whitebalance.Analyze(dir, whitebalance.ModeSettings{
+				WBRed:  cfg.Night.WBRed,
+				WBBlue: cfg.Night.WBBlue,
+				AWB:    cfg.Night.AWB,
+				Label:  "Night",
+			})
+			if err != nil {
+				logger.Warn("night WB analysis failed", "error", err)
+			} else {
+				results["Night"] = nightResult
+			}
+
+			dayResult, err := whitebalance.Analyze(dir, whitebalance.ModeSettings{
+				WBRed:  cfg.Day.WBRed,
+				WBBlue: cfg.Day.WBBlue,
+				AWB:    cfg.Day.AWB,
+				Label:  "Day",
+			})
+			if err != nil {
+				logger.Warn("day WB analysis failed", "error", err)
+			} else {
+				results["Day"] = dayResult
+			}
+
+			if len(results) == 0 {
+				return fmt.Errorf("no images could be analysed")
+			}
+
+			outPath, _ := whitebalance.ReportPath(dir)
+			if err := whitebalance.WriteReport(dir, results); err != nil {
+				return fmt.Errorf("write report: %w", err)
+			}
+			fmt.Printf("WB analysis written to: %s\n", outPath)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&dir, "dir", "d", "", "image directory to analyse (default: most recent)")
+	return cmd
 }
