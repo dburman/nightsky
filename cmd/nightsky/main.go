@@ -209,7 +209,7 @@ func captureCmd() *cobra.Command {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if _, err := keogram.Generate(ctx, dateDir, logger); err != nil {
+					if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
 						logger.Error("keogram generation failed", "error", err)
 					}
 				}()
@@ -219,7 +219,7 @@ func captureCmd() *cobra.Command {
 				// Star trails runs after timelapse+keogram complete — it is the
 				// most memory-intensive task and benefits from others having
 				// released their allocations first.
-				if _, err := startrails.Generate(ctx, dateDir, logger); err != nil {
+				if _, err := startrails.Generate(ctx, dateDir, startrails.DefaultMaxMeanBrightness, logger); err != nil {
 					logger.Error("star trails generation failed", "error", err)
 				}
 

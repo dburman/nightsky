@@ -17,11 +17,18 @@ import (
 	"sync"
 )
 
-// Generate builds a star-trails image from all images in dateDir by
-// max-blending each frame: for every pixel the brightest value seen across
-// all frames is kept. Saves the result to <dateDir>/startrails-<date>.jpg
-// and returns the output path.
-func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string, error) {
+// DefaultMaxMeanBrightness is the mean pixel brightness (0–255) above which a
+// frame is considered twilight or daylight and excluded from the star-trails
+// stack. Max-blending a bright frame washes out all star detail, so we discard
+// any frame whose scene-wide mean exceeds this value.
+const DefaultMaxMeanBrightness = 50
+
+// Generate builds a star-trails image from the dark frames in dateDir by
+// max-blending each qualifying frame: for every pixel the brightest value seen
+// across all frames is kept. Frames whose mean brightness exceeds
+// maxMeanBrightness are skipped so that twilight and daylight do not wash out
+// the result. Saves to <dateDir>/startrails-<date>.jpg and returns the path.
+func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, logger *slog.Logger) (string, error) {
 	entries, err := os.ReadDir(dateDir)
 	if err != nil {
 		return "", fmt.Errorf("read dir: %w", err)
@@ -46,6 +53,7 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 	logger.Info("generating star trails", "images", len(files), "dir", dateDir)
 
 	var result *image.RGBA
+	var used, skipped int
 
 	for i, path := range files {
 		select {
@@ -61,25 +69,37 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 		f, err := os.Open(path)
 		if err != nil {
 			logger.Warn("star trails: skipping image", "path", path, "error", err)
+			skipped++
 			continue
 		}
 		img, _, err := image.Decode(f)
 		f.Close()
 		if err != nil {
 			logger.Warn("star trails: skipping image", "path", path, "error", err)
+			skipped++
+			continue
+		}
+
+		// Discard twilight and daylight frames — they wash out star detail.
+		if mean := meanBrightness(img); mean > maxMeanBrightness {
+			skipped++
 			continue
 		}
 
 		if result == nil {
 			result = toRGBA(img)
+			used++
 			continue
 		}
 
 		maxBlend(result, img)
+		used++
 	}
 
+	logger.Info("star trails brightness filter", "used", used, "skipped", skipped)
+
 	if result == nil {
-		return "", fmt.Errorf("no images could be decoded in %s", dateDir)
+		return "", fmt.Errorf("no dark frames found in %s (all %d images exceeded brightness threshold %.0f)", dateDir, len(files), maxMeanBrightness)
 	}
 
 	date := filepath.Base(dateDir)
@@ -95,6 +115,26 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 
 	logger.Info("star trails saved", "path", outPath)
 	return outPath, nil
+}
+
+// meanBrightness returns the luminance-weighted mean brightness (0–255) of img,
+// sampling every 4th pixel for speed.
+func meanBrightness(img image.Image) float64 {
+	b := img.Bounds()
+	var sum float64
+	var count int
+	for y := b.Min.Y; y < b.Max.Y; y += 4 {
+		for x := b.Min.X; x < b.Max.X; x += 4 {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			lum := 0.299*float64(r>>8) + 0.587*float64(g>>8) + 0.114*float64(bl>>8)
+			sum += lum
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / float64(count)
 }
 
 // toRGBA converts any image.Image to *image.RGBA using draw.Draw for a

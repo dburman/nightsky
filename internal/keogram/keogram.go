@@ -15,22 +15,27 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // outputHeight is the fixed pixel height of the generated keogram.
 const outputHeight = 480
 
-// Generate builds a keogram from all images in dateDir and saves it to
+// DefaultMaxMeanBrightness is the mean pixel brightness (0–255) above which a
+// frame is considered twilight or daylight and excluded from the keogram.
+const DefaultMaxMeanBrightness = 50
+
+// Generate builds a keogram from the dark frames in dateDir and saves it to
 // <dateDir>/keogram-<date>.jpg. Returns the output path.
 //
-// A keogram is constructed by extracting the center column from each image
-// (in time order) and stitching the columns left-to-right. The result is a
-// single image where the X axis is time and the Y axis is the sky from
-// horizon (top/bottom) to zenith (centre).
+// A keogram is constructed by extracting the center column from each qualifying
+// image (in time order) and stitching the columns left-to-right. Frames whose
+// mean brightness exceeds maxMeanBrightness are skipped so that twilight and
+// daylight do not wash out the result.
 //
 // Images are decoded in parallel using runtime.NumCPU() workers. Canvas
 // writes are lock-free because each goroutine owns a distinct column.
-func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string, error) {
+func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, logger *slog.Logger) (string, error) {
 	entries, err := os.ReadDir(dateDir)
 	if err != nil {
 		return "", fmt.Errorf("read dir: %w", err)
@@ -55,13 +60,14 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 	logger.Info("generating keogram", "images", len(files), "dir", dateDir)
 
 	// Pre-allocate strip storage: each element is outputHeight*4 bytes (RGBA),
-	// nil means the image could not be decoded.
+	// nil means the image was skipped (too bright or decode error).
 	strips := make([][]byte, len(files))
 
 	// Bounded worker pool — limit concurrent image decodes to avoid OOM on
 	// memory-constrained hardware (e.g. Raspberry Pi Zero 2W with 512 MB).
 	sem := make(chan struct{}, runtime.NumCPU())
 	var wg sync.WaitGroup
+	var skipped atomic.Int64
 
 	for x, path := range files {
 		select {
@@ -76,15 +82,23 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			data, err := extractCenterStrip(path)
+			data, err := extractCenterStrip(path, maxMeanBrightness)
 			if err != nil {
 				logger.Warn("keogram: skipping image", "path", path, "error", err)
+				skipped.Add(1)
+				return
+			}
+			if data == nil {
+				// Frame too bright — silently skip.
+				skipped.Add(1)
 				return
 			}
 			strips[x] = data // each goroutine writes to a distinct index: no race
 		}(x, path)
 	}
 	wg.Wait()
+
+	logger.Info("keogram brightness filter", "total", len(files), "skipped", skipped.Load())
 
 	canvas := image.NewRGBA(image.Rect(0, 0, len(files), outputHeight))
 
@@ -113,9 +127,10 @@ func Generate(ctx context.Context, dateDir string, logger *slog.Logger) (string,
 	return outPath, nil
 }
 
-// extractCenterStrip decodes the image at path, extracts its center column,
-// and returns outputHeight RGBA pixels (4 bytes each) scaled to fit.
-func extractCenterStrip(path string) ([]byte, error) {
+// extractCenterStrip decodes the image at path, checks its mean brightness
+// against maxMeanBrightness, and returns outputHeight RGBA pixels (4 bytes
+// each) scaled to fit. Returns nil, nil when the frame is too bright.
+func extractCenterStrip(path string, maxMeanBrightness float64) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -125,6 +140,11 @@ func extractCenterStrip(path string) ([]byte, error) {
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, err
+	}
+
+	// Discard twilight and daylight frames.
+	if meanBrightness(img) > maxMeanBrightness {
+		return nil, nil
 	}
 
 	// Convert to RGBA once for direct buffer access.
@@ -148,4 +168,24 @@ func extractCenterStrip(path string) ([]byte, error) {
 		copy(out[dy*4:dy*4+4], rgba.Pix[si:si+4])
 	}
 	return out, nil
+}
+
+// meanBrightness returns the luminance-weighted mean brightness (0–255) of img,
+// sampling every 4th pixel for speed.
+func meanBrightness(img image.Image) float64 {
+	b := img.Bounds()
+	var sum float64
+	var count int
+	for y := b.Min.Y; y < b.Max.Y; y += 4 {
+		for x := b.Min.X; x < b.Max.X; x += 4 {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			lum := 0.299*float64(r>>8) + 0.587*float64(g>>8) + 0.114*float64(bl>>8)
+			sum += lum
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / float64(count)
 }
