@@ -97,6 +97,18 @@ type OutputConfig struct {
 	OverlayFontSize float64 `mapstructure:"overlay_font_size" json:"overlay_font_size"`
 	// Timelapse settings.
 	Timelapse TimelapseConfig `mapstructure:"timelapse"        json:"timelapse"`
+	// WebP conversion settings.
+	WebP WebPConfig `mapstructure:"webp"             json:"webp"`
+}
+
+// WebPConfig controls end-of-night PNG→WebP conversion.
+type WebPConfig struct {
+	// Enabled converts captured PNG images to WebP at end of night.
+	Enabled bool `mapstructure:"enabled"          json:"enabled"`
+	// Quality sets the lossy WebP quality (0–100, default 85).
+	Quality int `mapstructure:"quality"          json:"quality"`
+	// DeleteOriginals removes the source PNG after successful conversion.
+	DeleteOriginals bool `mapstructure:"delete_originals" json:"delete_originals"`
 }
 
 // TimelapseConfig controls video generation.
@@ -241,6 +253,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.fps", 25)
 	v.SetDefault("output.timelapse.bitrate", "2000k")
 	v.SetDefault("output.timelapse.codec", "libx264")
+
+	v.SetDefault("output.webp.enabled", false)
+	v.SetDefault("output.webp.quality", 85)
+	v.SetDefault("output.webp.delete_originals", false)
 
 	v.SetDefault("upload.upload_images", false)
 	v.SetDefault("upload.upload_timelapse", true)

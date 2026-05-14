@@ -15,6 +15,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Keogram** — Single-image summary of the night: center column from each frame stitched left-to-right so clouds, aurora, and milky way transits are visible at a glance
 - **Star trails** — Max-blend stack of all night frames, keeping the brightest pixel seen at each position across the full night
 - **White balance analysis** — Samples images at end of night, measures mean R/G/B channel values, and writes a plain-text report (`wb-analysis-<date>.txt`) with suggested WB red/blue adjustments
+- **WebP conversion** — Converts captured PNGs to WebP at end of night for long-term storage; configurable quality and optional deletion of originals (requires `cwebp`)
 - **S3 upload** — AWS S3 with support for custom endpoints (Backblaze B2, MinIO, etc.)
 - **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
 - **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
@@ -116,6 +117,7 @@ For the ZWO variant or ARMv7 targets, use `Dockerfile.build` via the Makefile ta
 - **ffmpeg** — for timelapse generation
 - **rpicam-still** or **libcamera-still** — for Raspberry Pi CSI cameras (Bookworm uses `rpicam-still`; Bullseye uses `libcamera-still` — nightsky auto-detects both)
 - **libASICamera2 + libusb-1.0** — for ZWO cameras (only if built with `-tags zwo`)
+- **cwebp** — for WebP conversion (only if `output.webp.enabled: true`; install via `apt-get install webp`)
 
 ### Option 1: Docker Compose (recommended)
 
@@ -313,6 +315,12 @@ output:
     fps: 25
     bitrate: 2000k
     codec: libx264          # or libx265
+
+  # Requires: apt-get install webp
+  webp:
+    enabled: false
+    quality: 85             # 0–100 lossy quality
+    delete_originals: false # remove source PNG after conversion
 ```
 
 ### Upload
@@ -390,7 +398,7 @@ Global Flags:
 
 Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. All images from a single night session are kept in one directory named after the night's start date, even when captures cross midnight.
 
-At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, a star-trails image, and a white balance analysis report. Uploads and disk cleanup run after.
+At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, a star-trails image, and a white balance analysis report. If WebP conversion is enabled it runs next, then uploads and disk cleanup.
 
 ```bash
 nightsky capture
@@ -507,7 +515,7 @@ Suggested: WB Red=61  WB Blue=67
 ```
 output/
 ├── 2026-03-15/             ← named after the night's start date (survives midnight crossings)
-│   ├── allsky-20260315191503.png
+│   ├── allsky-20260315191503.png       ← or .webp if conversion enabled
 │   ├── allsky-20260315191513.png
 │   ├── ...
 │   ├── timelapse-2026-03-15.mp4
@@ -538,6 +546,7 @@ internal/
 ├── keogram/           Keogram generation (parallel image decode, direct pixel access)
 ├── startrails/        Star-trails generation (max-blend stack, parallel rows)
 ├── timelapse/         ffmpeg video assembly
+├── convert/           End-of-night PNG→WebP conversion (cwebp)
 ├── upload/            S3 and HTTP upload backends
 ├── web/               Embedded HTTP server and UI (no external dependencies)
 ├── whitebalance/      WB channel analysis and per-night adjustment suggestions

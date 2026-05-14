@@ -85,6 +85,14 @@ output:
     bitrate: 2000k
     codec: libx264
 
+  # End-of-night PNG → WebP conversion (requires: apt-get install webp)
+  webp:
+    enabled: false
+    # Lossy quality 0–100 (85 is a good balance of size vs. quality)
+    quality: 85
+    # Remove the original PNG after successful conversion
+    delete_originals: false
+
 upload:
   # Upload each captured image (can be bandwidth-heavy)
   upload_images: false

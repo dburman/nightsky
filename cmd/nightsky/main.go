@@ -13,6 +13,7 @@ import (
 	"github.com/dburman/nightsky/internal/camera/libcamera"
 	"github.com/dburman/nightsky/internal/capture"
 	"github.com/dburman/nightsky/internal/config"
+	"github.com/dburman/nightsky/internal/convert"
 	"github.com/dburman/nightsky/internal/keogram"
 	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
@@ -240,6 +241,18 @@ func captureCmd() *cobra.Command {
 						logger.Error("WB report write failed", "error", err)
 					} else {
 						logger.Info("WB analysis written", "dir", dateDir)
+					}
+				}
+
+				// WebP conversion — runs after all generation steps so the
+				// timelapse input list is never broken by missing PNGs.
+				if cfg.Output.WebP.Enabled {
+					if err := convert.ConvertPNGsToWebP(ctx, dateDir,
+						cfg.Output.WebP.Quality,
+						cfg.Output.WebP.DeleteOriginals,
+						logger,
+					); err != nil {
+						logger.Error("webp conversion failed", "error", err)
 					}
 				}
 
