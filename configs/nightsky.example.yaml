@@ -65,7 +65,17 @@ output:
   directory: ./output
   # Filename prefix for images
   filename_prefix: allsky
-  # Disk space cleanup (choose one strategy, or leave both at 0 to keep everything):
+  # --- Disk space management ---
+  #
+  # Strategy 1 — prune raw images after N days (recommended for long-term use):
+  # After N days, raw captured images are deleted from a night directory but the
+  # synthesized outputs (timelapse, keogram, star trails, WB analysis) are kept.
+  # Use this to retain a permanent record of each night's highlights while
+  # reclaiming the bulk of the storage. 0 = disabled.
+  prune_raw_after_days: 0
+  #
+  # Strategy 2 — full directory deletion (choose one approach below, or combine
+  # with prune_raw_after_days to delete entire directories after even longer):
   #
   # Option A — space-based (recommended): delete oldest nights first, only when
   # the disk is getting full. Today's directory is never removed.

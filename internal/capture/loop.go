@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dburman/nightsky/internal/astro"
@@ -287,6 +288,89 @@ func (l *Loop) initMode() {
 			l.logger.Info("loaded dark frame for mode", "mode", l.mode)
 		}
 	}
+}
+
+// PruneRawImages removes raw captured image files from night directories older
+// than afterDays, while keeping synthesized outputs (timelapse, keogram, star
+// trails, WB analysis report). The .thumbs cache is also removed since its
+// source images will be gone. Today's directory is never touched.
+func PruneRawImages(outputDir string, afterDays int, logger *slog.Logger) error {
+	if afterDays <= 0 {
+		return nil
+	}
+
+	today := time.Now().Format("2006-01-02")
+	cutoff := time.Now().AddDate(0, 0, -afterDays)
+
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return fmt.Errorf("read output dir: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == today {
+			continue
+		}
+		dirDate, err := time.Parse("2006-01-02", entry.Name())
+		if err != nil {
+			continue
+		}
+		if !dirDate.Before(cutoff) {
+			continue
+		}
+
+		dirPath := filepath.Join(outputDir, entry.Name())
+		pruned, err := pruneRawInDir(dirPath)
+		if err != nil {
+			logger.Error("failed to prune raw images", "dir", dirPath, "error", err)
+			continue
+		}
+		if pruned > 0 {
+			logger.Info("pruned raw images, kept synthesized outputs",
+				"dir", dirPath,
+				"removed", pruned,
+			)
+		}
+	}
+
+	return nil
+}
+
+// pruneRawInDir deletes all files and subdirectories in dir except the
+// synthesized night outputs: timelapse-*, keogram-*, startrails-*, wb-analysis-*.
+// Returns the number of items removed.
+func pruneRawInDir(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("read dir: %w", err)
+	}
+
+	var removed int
+	for _, e := range entries {
+		lower := strings.ToLower(e.Name())
+
+		// Keep synthesized outputs regardless of extension.
+		if strings.HasPrefix(lower, "timelapse-") ||
+			strings.HasPrefix(lower, "keogram-") ||
+			strings.HasPrefix(lower, "startrails-") ||
+			strings.HasPrefix(lower, "wb-analysis-") {
+			continue
+		}
+
+		path := filepath.Join(dir, e.Name())
+		if e.IsDir() {
+			if err := os.RemoveAll(path); err != nil {
+				return removed, err
+			}
+		} else {
+			if err := os.Remove(path); err != nil {
+				return removed, err
+			}
+		}
+		removed++
+	}
+
+	return removed, nil
 }
 
 // CleanOldData removes output directories older than DaysToKeep.

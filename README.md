@@ -19,7 +19,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **S3 upload** — AWS S3 with support for custom endpoints (Backblaze B2, MinIO, etc.)
 - **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
 - **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
-- **Automatic cleanup** — Space-based (`min_free_gb`) or time-based (`days_to_keep`) retention; today's directory is never removed
+- **Automatic cleanup** — Space-based (`min_free_gb`) or time-based (`days_to_keep`) full-directory deletion; or `prune_raw_after_days` to delete only raw frames while keeping timelapse, keogram, star trails, and WB analysis permanently
 - **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date with Video, Keogram, Star Trails, and Images tabs; paginated lazy-loaded thumbnails; no external dependencies, embedded in the binary
 - **Single binary** — Cross-compiles to ARM64/ARMv7 for Raspberry Pi deployment
 
@@ -315,6 +315,10 @@ output:
     fps: 25
     bitrate: 2000k
     codec: libx264          # or libx265
+
+  # Prune raw frames after N days, keeping synthesized outputs (0 = disabled).
+  # Combine with days_to_keep to remove entire directories after even longer.
+  prune_raw_after_days: 0
 
   # Requires: apt-get install webp
   webp:

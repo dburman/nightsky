@@ -257,6 +257,13 @@ func captureCmd() *cobra.Command {
 					}
 				}
 
+				// Prune raw images from older nights, keeping synthesized outputs.
+				if cfg.Output.PruneRawAfterDays > 0 {
+					if err := capture.PruneRawImages(cfg.Output.Directory, cfg.Output.PruneRawAfterDays, logger); err != nil {
+						logger.Error("raw image pruning failed", "error", err)
+					}
+				}
+
 				// Clean old data. Space-based cleanup takes precedence over
 				// time-based: only delete when the disk is actually getting full.
 				switch {

@@ -86,11 +86,16 @@ type OutputConfig struct {
 	// FilenamePrefix for saved images (default "allsky").
 	FilenamePrefix string `mapstructure:"filename_prefix"  json:"filename_prefix"`
 	// DaysToKeep: delete directories older than this many days at end of night. 0 = disabled.
-	DaysToKeep int `mapstructure:"days_to_keep"     json:"days_to_keep"`
+	DaysToKeep int `mapstructure:"days_to_keep"        json:"days_to_keep"`
 	// MinFreeGB: when set, delete the oldest date directories at end of night
 	// until free disk space on the output volume exceeds this threshold (in GB).
 	// Takes precedence over DaysToKeep. Today's directory is never removed.
-	MinFreeGB float64 `mapstructure:"min_free_gb"       json:"min_free_gb"`
+	MinFreeGB float64 `mapstructure:"min_free_gb"          json:"min_free_gb"`
+	// PruneRawAfterDays: after N days, delete raw captured images from a night
+	// directory but keep the synthesized outputs (timelapse, keogram, star
+	// trails, WB analysis). 0 = disabled. Runs independently of DaysToKeep /
+	// MinFreeGB — use together to retain summaries longer than raw frames.
+	PruneRawAfterDays int `mapstructure:"prune_raw_after_days" json:"prune_raw_after_days"`
 	// Overlay enables timestamp/metadata text on images.
 	Overlay bool `mapstructure:"overlay"          json:"overlay"`
 	// OverlayFontSize in points (default 24).
@@ -247,6 +252,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.filename_prefix", "allsky")
 	v.SetDefault("output.days_to_keep", 0)
 	v.SetDefault("output.min_free_gb", 0.0)
+	v.SetDefault("output.prune_raw_after_days", 0)
 	v.SetDefault("output.overlay", true)
 	v.SetDefault("output.overlay_font_size", 24.0)
 	v.SetDefault("output.timelapse.enabled", true)
