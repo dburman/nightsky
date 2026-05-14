@@ -261,12 +261,23 @@ func (l *Loop) initMode() {
 
 	modeCfg := l.modeConfig()
 
+	// Holy Grail: seed the new controller with the current exposure and gain
+	// rather than the configured initial values. This prevents a hard jump at
+	// the day↔night transition — the auto-exposure algorithm ramps naturally
+	// from wherever it was to the new mode's target brightness.
+	initExposure := modeCfg.Exposure
+	initGain := modeCfg.Gain
+	if l.exposureCtrl != nil {
+		initExposure = l.exposureCtrl.Exposure
+		initGain = l.exposureCtrl.Gain
+	}
+
 	// Initialize auto-exposure controller.
 	minExposure := 100 * time.Microsecond
 	l.exposureCtrl = NewExposureController(
 		modeCfg.TargetBrightness,
-		modeCfg.Exposure,
-		modeCfg.Gain,
+		initExposure,
+		initGain,
 		minExposure,
 		modeCfg.MaxExposure,
 		0,
