@@ -119,13 +119,18 @@ type WebPConfig struct {
 // TimelapseConfig controls video generation.
 type TimelapseConfig struct {
 	// Enabled enables timelapse generation at end of night.
-	Enabled bool `mapstructure:"enabled" json:"enabled"`
+	Enabled bool `mapstructure:"enabled"    json:"enabled"`
 	// FPS for the timelapse video (default 25).
-	FPS int `mapstructure:"fps"     json:"fps"`
-	// Bitrate for the video (default "2000k").
-	Bitrate string `mapstructure:"bitrate" json:"bitrate"`
+	FPS int `mapstructure:"fps"        json:"fps"`
+	// Bitrate for the video (default "2000k"). Ignored when CRF > 0.
+	Bitrate string `mapstructure:"bitrate"    json:"bitrate"`
 	// Codec: "libx264" (default), "libx265".
-	Codec string `mapstructure:"codec"   json:"codec"`
+	Codec string `mapstructure:"codec"      json:"codec"`
+	// CRF sets the constant-rate-factor quality (0 = use Bitrate).
+	// Typical: 18–23 for libx264, 24–28 for libx265. Lower = better quality.
+	CRF int `mapstructure:"crf"        json:"crf"`
+	// Deflicker smooths per-frame brightness variation in the output video.
+	Deflicker bool `mapstructure:"deflicker"  json:"deflicker"`
 }
 
 // UploadConfig controls how images/videos are uploaded.
@@ -259,6 +264,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.fps", 25)
 	v.SetDefault("output.timelapse.bitrate", "2000k")
 	v.SetDefault("output.timelapse.codec", "libx264")
+	v.SetDefault("output.timelapse.crf", 0)
+	v.SetDefault("output.timelapse.deflicker", false)
 
 	v.SetDefault("output.webp.enabled", false)
 	v.SetDefault("output.webp.quality", 85)

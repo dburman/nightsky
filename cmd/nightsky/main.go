@@ -178,9 +178,11 @@ func captureCmd() *cobra.Command {
 					go func() {
 						defer wg.Done()
 						tlCfg := timelapse.Config{
-							FPS:     cfg.Output.Timelapse.FPS,
-							Bitrate: cfg.Output.Timelapse.Bitrate,
-							Codec:   cfg.Output.Timelapse.Codec,
+							FPS:       cfg.Output.Timelapse.FPS,
+							Bitrate:   cfg.Output.Timelapse.Bitrate,
+							Codec:     cfg.Output.Timelapse.Codec,
+							CRF:       cfg.Output.Timelapse.CRF,
+							Deflicker: cfg.Output.Timelapse.Deflicker,
 						}
 						videoPath, err := timelapse.Generate(ctx, dateDir, tlCfg, logger)
 						if err != nil {

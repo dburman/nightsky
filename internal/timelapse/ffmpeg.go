@@ -19,14 +19,23 @@ type Config struct {
 	FPS     int
 	Bitrate string
 	Codec   string
+	// CRF sets the constant-rate-factor quality level (0 = use Bitrate instead).
+	// Typical values: 18–23 for libx264, 24–28 for libx265.
+	// Lower = better quality, larger file. CRF takes precedence over Bitrate.
+	CRF int
+	// Deflicker smooths per-frame brightness variation caused by clouds,
+	// auto-exposure steps, and atmospheric changes.
+	Deflicker bool
 }
 
 // DefaultConfig returns sensible timelapse defaults.
 func DefaultConfig() Config {
 	return Config{
-		FPS:     25,
-		Bitrate: "2000k",
-		Codec:   "libx264",
+		FPS:       25,
+		Bitrate:   "2000k",
+		Codec:     "libx264",
+		CRF:       0,
+		Deflicker: false,
 	}
 }
 
@@ -71,13 +80,28 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 		"-y",
 		"-r", fmt.Sprintf("%d", cfg.FPS),
 		"-f", "concat",
+		"-safe", "0",
 		"-i", listPath,
 		"-vcodec", cfg.Codec,
-		"-b:v", cfg.Bitrate,
+	}
+
+	// Quality: CRF takes precedence over fixed bitrate.
+	if cfg.CRF > 0 {
+		args = append(args, "-crf", fmt.Sprintf("%d", cfg.CRF))
+	} else {
+		args = append(args, "-b:v", cfg.Bitrate)
+	}
+
+	// Deflicker filter smooths per-frame brightness variation.
+	if cfg.Deflicker {
+		args = append(args, "-vf", "deflicker=size=5:mode=am")
+	}
+
+	args = append(args,
 		"-pix_fmt", "yuv420p",
 		"-movflags", "+faststart",
 		tmpOutput,
-	}
+	)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer
