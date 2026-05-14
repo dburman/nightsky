@@ -25,14 +25,14 @@ location:
 day:
   exposure: 1ms
   max_exposure: 100ms
-  gain: 1
-  max_gain: 10
+  gain: 1.0
+  max_gain: 4.0
   auto_exposure: true
   target_brightness: 160
   delay: 5s
   binning: 1
-  wb_red: 52
-  wb_blue: 90
+  wb_red: 2.1               # libcamera gain multiplier (0.0–10.0)
+  wb_blue: 1.8
   awb: true
   image_type: jpg
   quality: 95
@@ -40,17 +40,20 @@ day:
   denoise: cdn_fast
 
 # Night mode settings (sun below angle threshold)
+# Tuned for the Sony IMX462 (Starvis) — a highly sensitive sensor that needs
+# less gain than typical cameras. Reduce target_brightness if the sky background
+# is too bright; lower max_gain if amp glow appears at the frame edges.
 night:
-  exposure: 10s
-  max_exposure: 60s
-  gain: 200
-  max_gain: 400
+  exposure: 4s
+  max_exposure: 20s
+  gain: 1.5
+  max_gain: 6.0
   auto_exposure: true
-  target_brightness: 90
+  target_brightness: 60     # IMX462 is very sensitive — keep sky background dark
   delay: 0s
   binning: 1
-  wb_red: 52
-  wb_blue: 90
+  wb_red: 2.1               # libcamera gain multiplier (0.0–10.0); tune with: nightsky analyze
+  wb_blue: 1.8
   awb: false
   image_type: png
   quality: 95

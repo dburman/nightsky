@@ -43,8 +43,8 @@ func DefaultOverlayConfig() OverlayConfig {
 	}
 }
 
-// ApplyOverlay renders metadata text onto the image.
-// Uses a simple bitmap font approach to avoid external font dependencies.
+// ApplyOverlay renders metadata text onto the image as a single-line footer.
+// The timestamp is left-aligned; exposure settings are right-aligned.
 func ApplyOverlay(img image.Image, meta camera.CaptureMeta, cfg OverlayConfig) image.Image {
 	if !cfg.Enabled {
 		return img
@@ -54,56 +54,65 @@ func ApplyOverlay(img image.Image, meta camera.CaptureMeta, cfg OverlayConfig) i
 	canvas := image.NewRGBA(bounds)
 	draw.Draw(canvas, bounds, img, bounds.Min, draw.Src)
 
-	lines := buildOverlayLines(meta, cfg)
-	if len(lines) == 0 {
+	left, right := buildOverlayText(meta, cfg)
+	if left == "" && right == "" {
 		return canvas
 	}
 
-	// Draw a semi-transparent background bar at the bottom.
-	lineHeight := int(cfg.FontSize * 1.4)
-	barHeight := lineHeight*len(lines) + 10
+	// Single-line bar: glyph height (7px) plus vertical padding.
+	const glyphH = 7
+	const padV = 5
+	barHeight := glyphH + padV*2
 	barRect := image.Rect(0, bounds.Max.Y-barHeight, bounds.Max.X, bounds.Max.Y)
 
 	bgColor := color.RGBA{0, 0, 0, 160}
 	draw.Draw(canvas, barRect, &image.Uniform{bgColor}, image.Point{}, draw.Over)
 
-	// Render text lines using a simple approach.
-	// For production use, replace with github.com/fogleman/gg for proper font rendering.
 	textColor := color.RGBA{255, 255, 255, 255}
-	y := bounds.Max.Y - barHeight + 8
-	for _, line := range lines {
-		drawSimpleText(canvas, 10, y, line, textColor)
-		y += lineHeight
+	textY := bounds.Max.Y - barHeight + padV
+
+	line := left
+	if right != "" {
+		if left != "" {
+			line += "    " + right
+		} else {
+			line = right
+		}
+	}
+	if line != "" {
+		drawSimpleText(canvas, 8, textY, line, textColor)
 	}
 
 	return canvas
 }
 
-func buildOverlayLines(meta camera.CaptureMeta, cfg OverlayConfig) []string {
-	var lines []string
-
+func buildOverlayText(meta camera.CaptureMeta, cfg OverlayConfig) (left, right string) {
 	if cfg.ShowTimestamp {
-		lines = append(lines, meta.Timestamp.Format("2006-01-02 15:04:05 MST"))
+		left = meta.Timestamp.Format("2006-01-02 15:04:05 MST")
 	}
 
+	var parts []string
 	if cfg.ShowExposure {
-		expStr := formatExposure(meta.Exposure)
-		lines = append(lines, fmt.Sprintf("Exp: %s  Gain: %.0f", expStr, meta.Gain))
+		parts = append(parts, fmt.Sprintf("Exp:%s Gain:%.0f", formatExposure(meta.Exposure), meta.Gain))
 	}
-
 	if cfg.ShowTemperature && meta.Temperature != 0 {
-		lines = append(lines, fmt.Sprintf("Sensor: %.1f°C", meta.Temperature))
+		parts = append(parts, fmt.Sprintf("%.1fC", meta.Temperature))
 	}
-
 	if cfg.ShowMean && meta.MeanBrightness >= 0 {
-		lines = append(lines, fmt.Sprintf("Mean: %.1f", meta.MeanBrightness))
+		parts = append(parts, fmt.Sprintf("Mean:%.0f", meta.MeanBrightness))
 	}
-
 	if cfg.ExtraText != "" {
-		lines = append(lines, cfg.ExtraText)
+		parts = append(parts, cfg.ExtraText)
 	}
 
-	return lines
+	for i, p := range parts {
+		if i == 0 {
+			right = p
+		} else {
+			right += "  " + p
+		}
+	}
+	return left, right
 }
 
 func formatExposure(d time.Duration) string {
