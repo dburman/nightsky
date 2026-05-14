@@ -98,11 +98,11 @@ output:
     codec: libx264          # or libx265
     # Quality — choose CRF or bitrate (CRF takes precedence when non-zero):
     # CRF (recommended): 18–23 for libx264, 24–28 for libx265. Lower = better.
-    crf: 0
+    crf: 20
     bitrate: 2000k          # used only when crf is 0
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses.
-    deflicker: false
+    deflicker: true
 
   # End-of-night PNG → WebP conversion (requires: apt-get install webp)
   webp:

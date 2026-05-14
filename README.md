@@ -11,7 +11,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Automatic day/night switching** — Built-in NOAA solar position algorithm determines day/night based on your coordinates and a configurable sun altitude angle (civil, nautical, or astronomical twilight)
 - **Auto-exposure** — Logarithmic exposure level algorithm that adjusts exposure and gain to maintain target brightness, with anti-oscillation detection
 - **Dark frame subtraction** — Capture, average, and subtract calibration frames to remove hot pixels and fixed-pattern noise
-- **Timelapse generation** — Assembles each night's images into an MP4 video via ffmpeg
+- **Timelapse generation** — Assembles each night's images into an MP4 via ffmpeg with CRF quality mode, optional deflicker filter, and smooth Holy Grail day/night exposure transitions
 - **Keogram** — Single-image summary of the night: center column from each frame stitched left-to-right so clouds, aurora, and milky way transits are visible at a glance
 - **Star trails** — Max-blend stack of all night frames, keeping the brightest pixel seen at each position across the full night
 - **White balance analysis** — Samples images at end of night, measures mean R/G/B channel values, and writes a plain-text report (`wb-analysis-<date>.txt`) with suggested WB red/blue adjustments
@@ -313,8 +313,10 @@ output:
   timelapse:
     enabled: true
     fps: 25
-    bitrate: 2000k
     codec: libx264          # or libx265
+    crf: 20                 # constant-rate-factor quality (0 = use bitrate instead)
+    bitrate: 2000k          # used only when crf: 0
+    deflicker: true         # smooth per-frame brightness variation
 
   # Prune raw frames after N days, keeping synthesized outputs (0 = disabled).
   # Combine with days_to_keep to remove entire directories after even longer.

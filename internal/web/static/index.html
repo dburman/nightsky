@@ -670,10 +670,11 @@ function renderConfig(cfg) {
       <div class="card">
         <div class="card-title">Timelapse</div>
         ${kv([
-          ['Enabled', badge(tl.enabled)],
-          ['FPS',     esc(tl.fps)],
-          ['Bitrate', `<span class="mono">${esc(tl.bitrate)}</span>`],
-          ['Codec',   `<span class="mono">${esc(tl.codec)}</span>`],
+          ['Enabled',   badge(tl.enabled)],
+          ['FPS',       esc(tl.fps)],
+          ['Codec',     `<span class="mono">${esc(tl.codec)}</span>`],
+          ['Quality',   tl.crf > 0 ? `CRF ${esc(tl.crf)}` : `<span class="mono">${esc(tl.bitrate)}</span>`],
+          ['Deflicker', badge(tl.deflicker)],
         ])}
       </div>
 
