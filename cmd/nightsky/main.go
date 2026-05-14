@@ -226,10 +226,11 @@ func captureCmd() *cobra.Command {
 				// White balance analysis.
 				wbResults := map[string]*whitebalance.Result{}
 				nightResult, err := whitebalance.Analyze(dateDir, whitebalance.ModeSettings{
-					WBRed:  cfg.Night.WBRed,
-					WBBlue: cfg.Night.WBBlue,
-					AWB:    cfg.Night.AWB,
-					Label:  "Night",
+					WBRed:      cfg.Night.WBRed,
+					WBBlue:     cfg.Night.WBBlue,
+					AWB:        cfg.Night.AWB,
+					Label:      "Night",
+					CameraType: cfg.Camera.Type,
 				})
 				if err != nil {
 					logger.Warn("WB analysis failed", "error", err)
@@ -511,10 +512,11 @@ func analyzeCmd() *cobra.Command {
 			results := map[string]*whitebalance.Result{}
 
 			nightResult, err := whitebalance.Analyze(dir, whitebalance.ModeSettings{
-				WBRed:  cfg.Night.WBRed,
-				WBBlue: cfg.Night.WBBlue,
-				AWB:    cfg.Night.AWB,
-				Label:  "Night",
+				WBRed:      cfg.Night.WBRed,
+				WBBlue:     cfg.Night.WBBlue,
+				AWB:        cfg.Night.AWB,
+				Label:      "Night",
+				CameraType: cfg.Camera.Type,
 			})
 			if err != nil {
 				logger.Warn("night WB analysis failed", "error", err)
@@ -523,10 +525,11 @@ func analyzeCmd() *cobra.Command {
 			}
 
 			dayResult, err := whitebalance.Analyze(dir, whitebalance.ModeSettings{
-				WBRed:  cfg.Day.WBRed,
-				WBBlue: cfg.Day.WBBlue,
-				AWB:    cfg.Day.AWB,
-				Label:  "Day",
+				WBRed:      cfg.Day.WBRed,
+				WBBlue:     cfg.Day.WBBlue,
+				AWB:        cfg.Day.AWB,
+				Label:      "Day",
+				CameraType: cfg.Camera.Type,
 			})
 			if err != nil {
 				logger.Warn("day WB analysis failed", "error", err)

@@ -20,10 +20,11 @@ const maxSamples = 100
 
 // ModeSettings carries the current WB configuration for one capture mode.
 type ModeSettings struct {
-	WBRed  float64
-	WBBlue float64
-	AWB    bool
-	Label  string // "Night" or "Day"
+	WBRed      float64
+	WBBlue     float64
+	AWB        bool
+	Label      string // "Night" or "Day"
+	CameraType string // "zwo" or "libcamera"
 }
 
 // Result holds the analysis output for one set of images.
@@ -35,9 +36,15 @@ type Result struct {
 	CurrentWBRed  float64
 	CurrentWBBlue float64
 	AWBEnabled    bool
+	CameraType    string
 
 	SuggestedWBRed  float64
 	SuggestedWBBlue float64
+}
+
+// isLibcamera reports whether the result is for a libcamera backend.
+func (r *Result) isLibcamera() bool {
+	return r.CameraType == "libcamera"
 }
 
 // Analyze samples up to maxSamples images from dir, computes mean R/G/B
@@ -103,6 +110,7 @@ func Analyze(dir string, settings ModeSettings) (*Result, error) {
 		CurrentWBRed:  settings.WBRed,
 		CurrentWBBlue: settings.WBBlue,
 		AWBEnabled:    settings.AWB,
+		CameraType:    settings.CameraType,
 	}
 
 	// Derive suggestions. When AWB is on the camera is already self-correcting,
@@ -111,8 +119,12 @@ func Analyze(dir string, settings ModeSettings) (*Result, error) {
 		res.SuggestedWBRed = settings.WBRed
 		res.SuggestedWBBlue = settings.WBBlue
 	} else {
-		res.SuggestedWBRed = clampWB(settings.WBRed * safeRatio(meanG, meanR))
-		res.SuggestedWBBlue = clampWB(settings.WBBlue * safeRatio(meanG, meanB))
+		clamp := clampWBZWO
+		if res.isLibcamera() {
+			clamp = clampWBLibcamera
+		}
+		res.SuggestedWBRed = clamp(settings.WBRed * safeRatio(meanG, meanR))
+		res.SuggestedWBBlue = clamp(settings.WBBlue * safeRatio(meanG, meanB))
 	}
 
 	return res, nil
@@ -147,6 +159,13 @@ func WriteReport(dir string, results map[string]*Result) error {
 			continue
 		}
 
+		// libcamera uses float gain multipliers (0.0–10.0, 2 dp).
+		// ZWO uses integers (0–99).
+		wbFmt := "%.0f"
+		if res.isLibcamera() {
+			wbFmt = "%.2f"
+		}
+
 		sb.WriteString("\n")
 		sb.WriteString(fmt.Sprintf("%s Mode\n", label))
 		sb.WriteString(strings.Repeat("-", len(label)+5) + "\n")
@@ -156,11 +175,11 @@ func WriteReport(dir string, results map[string]*Result) error {
 		sb.WriteString("\n")
 
 		if res.AWBEnabled {
-			sb.WriteString(fmt.Sprintf("Current:   WB Red=%.0f  WB Blue=%.0f  AWB=enabled\n", res.CurrentWBRed, res.CurrentWBBlue))
+			sb.WriteString(fmt.Sprintf("Current:   WB Red="+wbFmt+"  WB Blue="+wbFmt+"  AWB=enabled\n", res.CurrentWBRed, res.CurrentWBBlue))
 			sb.WriteString("Suggested: no change — AWB is active and handling balance automatically.\n")
 		} else {
-			sb.WriteString(fmt.Sprintf("Current:   WB Red=%.0f  WB Blue=%.0f\n", res.CurrentWBRed, res.CurrentWBBlue))
-			sb.WriteString(fmt.Sprintf("Suggested: WB Red=%.0f  WB Blue=%.0f\n", res.SuggestedWBRed, res.SuggestedWBBlue))
+			sb.WriteString(fmt.Sprintf("Current:   WB Red="+wbFmt+"  WB Blue="+wbFmt+"\n", res.CurrentWBRed, res.CurrentWBBlue))
+			sb.WriteString(fmt.Sprintf("Suggested: WB Red="+wbFmt+"  WB Blue="+wbFmt+"\n", res.SuggestedWBRed, res.SuggestedWBBlue))
 			if explanation := explain(res); explanation != "" {
 				sb.WriteString("\n")
 				sb.WriteString(explanation)
@@ -243,9 +262,16 @@ func safeRatio(a, b float64) float64 {
 	return a / b
 }
 
-// clampWB rounds and clamps a WB value to the 0–99 range used by ZWO cameras.
-func clampWB(v float64) float64 {
+// clampWBZWO rounds and clamps a WB value to the 0–99 integer range used by ZWO cameras.
+func clampWBZWO(v float64) float64 {
 	return math.Round(math.Max(0, math.Min(99, v)))
+}
+
+// clampWBLibcamera rounds to 2 decimal places and clamps to the 0.0–10.0
+// gain-multiplier range used by libcamera's --awbgains.
+func clampWBLibcamera(v float64) float64 {
+	v = math.Max(0, math.Min(10.0, v))
+	return math.Round(v*100) / 100
 }
 
 // colorCast describes the dominant colour imbalance in plain English.
@@ -278,13 +304,21 @@ func colorCast(r, g, b float64) string {
 	}
 }
 
-// explain returns a one-line note describing the suggested change direction.
+// explain returns a note describing the suggested change direction.
 func explain(res *Result) string {
 	redDiff := res.SuggestedWBRed - res.CurrentWBRed
 	blueDiff := res.SuggestedWBBlue - res.CurrentWBBlue
 
-	noRed := math.Abs(redDiff) < 1
-	noBlue := math.Abs(blueDiff) < 1
+	// Threshold for "no meaningful change" differs by backend precision.
+	threshold := 1.0
+	diffFmt := "%.0f"
+	if res.isLibcamera() {
+		threshold = 0.01
+		diffFmt = "%.2f"
+	}
+
+	noRed := math.Abs(redDiff) < threshold
+	noBlue := math.Abs(blueDiff) < threshold
 
 	if noRed && noBlue {
 		return "  Current settings look well balanced — no change recommended."
@@ -296,14 +330,14 @@ func explain(res *Result) string {
 		if redDiff < 0 {
 			dir = "decrease"
 		}
-		parts = append(parts, fmt.Sprintf("%s WB Red by %.0f", dir, math.Abs(redDiff)))
+		parts = append(parts, fmt.Sprintf("%s WB Red by "+diffFmt, dir, math.Abs(redDiff)))
 	}
 	if !noBlue {
 		dir := "increase"
 		if blueDiff < 0 {
 			dir = "decrease"
 		}
-		parts = append(parts, fmt.Sprintf("%s WB Blue by %.0f", dir, math.Abs(blueDiff)))
+		parts = append(parts, fmt.Sprintf("%s WB Blue by "+diffFmt, dir, math.Abs(blueDiff)))
 	}
 
 	note := "  Suggested change: " + strings.Join(parts, ", ") + ".\n"
