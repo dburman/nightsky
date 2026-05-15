@@ -78,6 +78,11 @@ type ModeConfig struct {
 	// Cooler settings (ZWO cameras with cooling).
 	CoolerEnabled bool    `mapstructure:"cooler_enabled"    json:"cooler_enabled"`
 	CoolerTarget  float64 `mapstructure:"cooler_target"     json:"cooler_target"`
+	// MeteringZone sets the region used to compute mean brightness for
+	// auto-exposure. "full" = whole frame (default); "center" = inner 50%
+	// radius circle (zenith for upward-pointing all-sky cameras); "top" = top
+	// third of frame.
+	MeteringZone string `mapstructure:"metering_zone"     json:"metering_zone"`
 }
 
 // OutputConfig controls where and how images are saved.
@@ -263,6 +268,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("night.quality", 95)
 	v.SetDefault("night.skip_frames", 1)
 	v.SetDefault("night.denoise", "off")
+	v.SetDefault("night.metering_zone", "center")
+	v.SetDefault("day.metering_zone", "full")
 
 	v.SetDefault("output.directory", "./output")
 	v.SetDefault("output.filename_prefix", "allsky")

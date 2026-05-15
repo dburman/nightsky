@@ -157,12 +157,15 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		l.frameCount++
 
+		// Compute metered brightness for auto-exposure using the configured zone.
+		meteredMean := ZoneMean(result.Image, modeCfg.MeteringZone)
+
 		// Skip frames after mode transition.
 		if l.skipRemaining > 0 {
 			l.skipRemaining--
 			l.logger.Debug("skipping frame", "remaining", l.skipRemaining)
 			if modeCfg.AutoExposure {
-				l.exposureCtrl.Adjust(result.Meta.MeanBrightness)
+				l.exposureCtrl.Adjust(meteredMean)
 			}
 			continue
 		}
@@ -236,9 +239,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.OnImageSaved(outputPath, result.Meta)
 		}
 
-		// Auto-exposure adjustment.
+		// Auto-exposure adjustment using the metered zone mean.
 		if modeCfg.AutoExposure {
-			l.exposureCtrl.Adjust(result.Meta.MeanBrightness)
+			l.exposureCtrl.Adjust(meteredMean)
 		}
 
 		// Delay between captures.

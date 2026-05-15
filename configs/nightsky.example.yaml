@@ -38,6 +38,8 @@ day:
   quality: 95
   skip_frames: 5
   denoise: cdn_fast
+  # Metering zone for auto-exposure: "full", "center", or "top"
+  metering_zone: full
 
 # Night mode settings (sun below angle threshold)
 # Tuned for the Sony IMX462 (Starvis) — a highly sensitive sensor that needs
@@ -59,6 +61,10 @@ night:
   quality: 95
   skip_frames: 1
   denoise: off
+  # Metering zone for auto-exposure: "full", "center" (zenith), or "top"
+  # "center" is recommended for upward-pointing all-sky cameras — it meters
+  # the sky and ignores the lit ground/horizon at the frame edges.
+  metering_zone: center
   # ZWO cooler settings (ignored for RPi cameras)
   cooler_enabled: false
   cooler_target: -10
