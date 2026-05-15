@@ -115,6 +115,9 @@ func buildOverlayText(meta camera.CaptureMeta, cfg OverlayConfig) (left, right s
 	return left, right
 }
 
+// FormatExposure formats a capture duration as a human-readable string.
+func FormatExposure(d time.Duration) string { return formatExposure(d) }
+
 func formatExposure(d time.Duration) string {
 	if d >= time.Second {
 		return fmt.Sprintf("%.1fs", d.Seconds())

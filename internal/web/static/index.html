@@ -481,6 +481,96 @@ table.kv td.v {
   margin: 32px auto;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Live view ────────────────────────────────────────────── */
+.live-layout {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) { .live-layout { grid-template-columns: 1fr; } }
+
+.live-frame-wrap {
+  position: relative;
+  background: #000;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  aspect-ratio: 4/3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.live-frame-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.live-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.live-age {
+  font-size: 12px;
+  color: var(--muted);
+  font-family: var(--mono);
+  margin-left: auto;
+}
+.live-offline {
+  padding: 64px 0;
+  text-align: center;
+  color: var(--muted);
+}
+.metrics-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.metrics-card .card-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(30,45,74,0.4);
+  font-size: 13px;
+}
+.metric-row:last-child { border-bottom: none; }
+.metric-label { color: var(--muted); }
+.metric-value { color: var(--text); font-family: var(--mono); font-size: 12px; }
+.cloud-bar-wrap {
+  width: 64px;
+  height: 6px;
+  background: var(--surface);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+.cloud-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.4s;
+}
 </style>
 </head>
 <body>
@@ -490,6 +580,7 @@ table.kv td.v {
   <div class="main-tabs">
     <button id="tab-config" class="active" onclick="showTab('config')">Configuration</button>
     <button id="tab-captures" onclick="showTab('captures')">Captures</button>
+    <button id="tab-live" onclick="showTab('live')">Live</button>
   </div>
   <div class="status-badge">
     <div class="dot" id="status-dot"></div>
@@ -510,6 +601,11 @@ table.kv td.v {
       <button class="btn" onclick="loadCaptures(true)">Refresh ↺</button>
     </div>
     <div id="captures-content"><div class="spinner"></div></div>
+  </div>
+
+  <!-- Live tab -->
+  <div id="pane-live" class="tab-pane">
+    <div id="live-content"></div>
   </div>
 </main>
 
@@ -557,16 +653,6 @@ function esc(s) {
 
 /* ── Tab routing ────────────────────────────────────────── */
 let capturesLoaded = false;
-
-function showTab(name) {
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.main-tabs button').forEach(b => b.classList.remove('active'));
-  document.getElementById('pane-' + name).classList.add('active');
-  document.getElementById('tab-' + name).classList.add('active');
-  if (name === 'captures' && !capturesLoaded) {
-    loadCaptures(false);
-  }
-}
 
 /* ── Status ─────────────────────────────────────────────── */
 async function checkStatus() {
@@ -1047,6 +1133,133 @@ document.addEventListener('keydown', e => {
 document.getElementById('lightbox').addEventListener('click', e => {
   if (e.target === document.getElementById('lightbox')) lbClose();
 });
+
+/* ── Live view ──────────────────────────────────────────── */
+let liveInterval = null;
+let liveAutoRefresh = true;
+const LIVE_INTERVAL_MS = 5000;
+
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.main-tabs button').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-' + name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'captures' && !capturesLoaded) {
+    loadCaptures(false);
+  }
+  if (name === 'live') {
+    startLive();
+  } else {
+    stopLive();
+  }
+}
+
+function startLive() {
+  renderLiveShell();
+  refreshLive();
+  if (liveInterval) clearInterval(liveInterval);
+  liveInterval = setInterval(() => {
+    if (liveAutoRefresh) refreshLive();
+  }, LIVE_INTERVAL_MS);
+}
+
+function stopLive() {
+  if (liveInterval) { clearInterval(liveInterval); liveInterval = null; }
+}
+
+function renderLiveShell() {
+  document.getElementById('live-content').innerHTML = `
+    <div class="live-controls">
+      <button class="btn" id="live-refresh-btn" onclick="refreshLive()">Refresh ↺</button>
+      <button class="btn" id="live-auto-btn" onclick="toggleLiveAuto()">Auto-refresh: On</button>
+      <span class="live-age" id="live-age"></span>
+    </div>
+    <div class="live-layout">
+      <div>
+        <div class="live-frame-wrap" id="live-frame-wrap">
+          <div class="spinner"></div>
+        </div>
+      </div>
+      <div class="metrics-card" id="live-metrics">
+        <div class="card-title">Capture Metrics</div>
+        <div class="spinner"></div>
+      </div>
+    </div>
+  `;
+}
+
+async function refreshLive() {
+  // Load the latest frame — cache-bust with timestamp so browsers don't serve stale.
+  const frameWrap = document.getElementById('live-frame-wrap');
+  if (frameWrap) {
+    const ts = Date.now();
+    const img = new Image();
+    img.onload = () => {
+      frameWrap.innerHTML = '';
+      frameWrap.appendChild(img);
+    };
+    img.onerror = () => {
+      frameWrap.innerHTML = `<div class="live-offline"><div class="empty-icon" style="font-size:32px;margin-bottom:8px">📷</div>No image available</div>`;
+    };
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+    img.src = `/latest?w=1024&_=${ts}`;
+  }
+
+  // Load metrics.
+  const metricsEl = document.getElementById('live-metrics');
+  try {
+    const res = await fetch('/api/metrics');
+    if (!res.ok) throw new Error('capture not running');
+    const m = await res.json();
+
+    const age = m.last_capture ? timeSince(new Date(m.last_capture)) : '—';
+    const ageEl = document.getElementById('live-age');
+    if (ageEl) ageEl.textContent = `Last frame: ${age}`;
+
+    const cloudPct = Math.round((m.cloud_coverage || 0) * 100);
+    const modeBadge = m.mode === 'night'
+      ? `<span class="badge blue">night</span>`
+      : `<span class="badge green">day</span>`;
+
+    if (metricsEl) metricsEl.innerHTML = `
+      <div class="card-title">Capture Metrics</div>
+      ${metricRow('Mode',        modeBadge)}
+      ${metricRow('Exposure',    `<span class="mono">${esc(m.exposure || '—')}</span>`)}
+      ${metricRow('Gain',        `<span class="mono">${(m.gain || 0).toFixed(1)}</span>`)}
+      ${metricRow('Brightness',  `<span class="mono">${(m.mean_brightness || 0).toFixed(1)}</span>`)}
+      ${metricRow('Cloud cover', `<span class="mono">${cloudPct}%</span><span class="cloud-bar-wrap"><span class="cloud-bar" style="width:${cloudPct}%"></span></span>`)}
+      ${metricRow('Sensor temp', m.sensor_temp_c ? `<span class="mono">${m.sensor_temp_c.toFixed(1)} °C</span>` : '—')}
+      ${metricRow('Frames',      `<span class="mono">${(m.frame_count || 0).toLocaleString()}</span>`)}
+      ${metricRow('Updated',     `<span class="mono">${timeSince(new Date(m.updated_at))}</span>`)}
+    `;
+  } catch {
+    if (metricsEl) metricsEl.innerHTML = `
+      <div class="card-title">Capture Metrics</div>
+      <div style="color:var(--muted);font-size:13px;padding:16px 0;text-align:center">Capture not running</div>
+    `;
+    const ageEl = document.getElementById('live-age');
+    if (ageEl) ageEl.textContent = '';
+  }
+}
+
+function metricRow(label, value) {
+  return `<div class="metric-row"><span class="metric-label">${label}</span><span class="metric-value">${value}</span></div>`;
+}
+
+function timeSince(date) {
+  if (!date || isNaN(date)) return '—';
+  const s = Math.round((Date.now() - date.getTime()) / 1000);
+  if (s < 5)  return 'just now';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  return `${Math.floor(s/3600)}h ago`;
+}
+
+function toggleLiveAuto() {
+  liveAutoRefresh = !liveAutoRefresh;
+  const btn = document.getElementById('live-auto-btn');
+  if (btn) btn.textContent = `Auto-refresh: ${liveAutoRefresh ? 'On' : 'Off'}`;
+}
 
 /* ── Init ───────────────────────────────────────────────── */
 checkStatus();

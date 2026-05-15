@@ -17,6 +17,7 @@ import (
 	"github.com/dburman/nightsky/internal/config"
 	"github.com/dburman/nightsky/internal/flat"
 	imgutil "github.com/dburman/nightsky/internal/image"
+	"github.com/dburman/nightsky/internal/metrics"
 )
 
 // Mode represents the current capture mode.
@@ -272,6 +273,26 @@ func (l *Loop) Run(ctx context.Context) error {
 		// Auto-exposure adjustment using the metered zone mean.
 		if modeCfg.AutoExposure {
 			l.exposureCtrl.Adjust(meteredMean)
+		}
+
+		// Write live metrics for the web server's /api/metrics endpoint.
+		cloudCov := 0.0
+		if len(l.cloudMetrics) > 0 {
+			cloudCov = l.cloudMetrics[len(l.cloudMetrics)-1].Coverage
+		}
+		snap := metrics.Snapshot{
+			Mode:           l.mode.String(),
+			ExposureNs:     l.exposureCtrl.Exposure.Nanoseconds(),
+			Exposure:       imgutil.FormatExposure(l.exposureCtrl.Exposure),
+			Gain:           l.exposureCtrl.Gain,
+			FrameCount:     l.frameCount,
+			MeanBrightness: meteredMean,
+			CloudCoverage:  cloudCov,
+			SensorTempC:    result.Meta.Temperature,
+			LastCapture:    result.Meta.Timestamp,
+		}
+		if err := metrics.Write(l.cfg.Output.Directory, snap); err != nil {
+			l.logger.Debug("metrics write failed", "error", err)
 		}
 
 		// Delay between captures.

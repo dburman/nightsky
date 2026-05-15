@@ -17,6 +17,7 @@ import (
 
 	"github.com/dburman/nightsky/internal/config"
 	imgutil "github.com/dburman/nightsky/internal/image"
+	"github.com/dburman/nightsky/internal/metrics"
 )
 
 //go:embed static/index.html
@@ -40,6 +41,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
 	mux.HandleFunc("GET /api/config", s.handleConfig)
+	mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/captures", s.handleCaptures)
 	mux.HandleFunc("GET /api/captures/{date}/images", s.handleDateImages)
 	mux.HandleFunc("GET /latest", s.handleLatest)
@@ -63,6 +65,20 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.cfg)
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	snap, err := metrics.Read(s.cfg.Output.Directory)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "capture not running", http.StatusServiceUnavailable)
+			return
+		}
+		http.Error(w, "failed to read metrics", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	s.writeJSON(w, snap)
 }
 
 type captureEntry struct {
