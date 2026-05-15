@@ -98,6 +98,17 @@ output:
   overlay: true
   overlay_font_size: 24
 
+  # Histogram stretch — increases contrast on faint night-sky images.
+  # Applies a linear remap of [black_point, white_point] → [0, 255].
+  # Does not affect raw scientific data; only changes the saved JPEG/PNG appearance.
+  stretch:
+    enabled: false
+    # "auto" derives black/white points from 0.5th/99.5th percentile luminance.
+    # "manual" uses the black_point / white_point values below.
+    mode: auto
+    black_point: 0    # manual mode only
+    white_point: 255  # manual mode only
+
   timelapse:
     enabled: true
     fps: 25

@@ -181,6 +181,12 @@ func (l *Loop) Run(ctx context.Context) error {
 			processedImg = l.flatMgr.Apply(processedImg)
 		}
 
+		// Histogram stretch.
+		if l.cfg.Output.Stretch.Enabled {
+			sc := l.cfg.Output.Stretch
+			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint)
+		}
+
 		// Apply overlay.
 		overlayCfg := imgutil.DefaultOverlayConfig()
 		overlayCfg.Enabled = l.cfg.Output.Overlay

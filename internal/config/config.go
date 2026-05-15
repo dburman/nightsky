@@ -106,10 +106,25 @@ type OutputConfig struct {
 	Overlay bool `mapstructure:"overlay"          json:"overlay"`
 	// OverlayFontSize in points (default 24).
 	OverlayFontSize float64 `mapstructure:"overlay_font_size" json:"overlay_font_size"`
+	// Stretch controls histogram stretching applied to saved images.
+	Stretch StretchConfig `mapstructure:"stretch"          json:"stretch"`
 	// Timelapse settings.
 	Timelapse TimelapseConfig `mapstructure:"timelapse"        json:"timelapse"`
 	// WebP conversion settings.
 	WebP WebPConfig `mapstructure:"webp"             json:"webp"`
+}
+
+// StretchConfig controls histogram stretching applied to saved images.
+type StretchConfig struct {
+	// Enabled applies a histogram stretch to saved images. Raw scientific data
+	// is not affected — this only changes the saved JPEG/PNG appearance.
+	Enabled bool `mapstructure:"enabled"      json:"enabled"`
+	// Mode: "auto" (percentile-based, default) or "manual".
+	Mode string `mapstructure:"mode"         json:"mode"`
+	// BlackPoint is the input level (0–255) mapped to black in manual mode.
+	BlackPoint int `mapstructure:"black_point"  json:"black_point"`
+	// WhitePoint is the input level (0–255) mapped to white in manual mode.
+	WhitePoint int `mapstructure:"white_point"  json:"white_point"`
 }
 
 // WebPConfig controls end-of-night PNG→WebP conversion.
@@ -278,6 +293,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.prune_raw_after_days", 0)
 	v.SetDefault("output.overlay", true)
 	v.SetDefault("output.overlay_font_size", 24.0)
+	v.SetDefault("output.stretch.enabled", false)
+	v.SetDefault("output.stretch.mode", "auto")
+	v.SetDefault("output.stretch.black_point", 0)
+	v.SetDefault("output.stretch.white_point", 255)
 	v.SetDefault("output.timelapse.enabled", true)
 	v.SetDefault("output.timelapse.fps", 25)
 	v.SetDefault("output.timelapse.bitrate", "2000k")
