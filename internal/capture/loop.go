@@ -14,6 +14,7 @@ import (
 	"github.com/dburman/nightsky/internal/astro"
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/config"
+	"github.com/dburman/nightsky/internal/flat"
 	imgutil "github.com/dburman/nightsky/internal/image"
 )
 
@@ -46,6 +47,7 @@ type Loop struct {
 	exposureCtrl    *ExposureController
 	darkMgr         *DarkFrameManager
 	currentDark     image.Image
+	flatMgr         *flat.Manager
 	frameCount      int64
 	skipRemaining   int
 
@@ -65,6 +67,14 @@ func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 	// Initialize dark frame manager if enabled.
 	if cfg.Dark.Enabled {
 		l.darkMgr = NewDarkFrameManager(cfg.Dark.Directory, cfg.Dark.Count, cam, logger)
+	}
+
+	// Initialize flat field manager if enabled.
+	if cfg.Flat.Enabled {
+		l.flatMgr = flat.NewManager(cfg.Flat.Directory, cfg.Flat.Count, cam, logger)
+		if err := l.flatMgr.Load(); err != nil {
+			logger.Warn("flat frame load failed", "error", err)
+		}
 	}
 
 	return l
@@ -161,6 +171,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		processedImg := result.Image
 		if l.currentDark != nil {
 			processedImg = SubtractDark(processedImg, l.currentDark)
+		}
+
+		// Flat field correction.
+		if l.flatMgr != nil && l.flatMgr.Ready() {
+			processedImg = l.flatMgr.Apply(processedImg)
 		}
 
 		// Apply overlay.

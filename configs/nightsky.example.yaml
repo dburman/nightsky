@@ -140,3 +140,12 @@ dark:
   directory: ./darks
   # Number of dark frames to average
   count: 5
+
+flat:
+  # Enable flat-field correction for lens vignetting. Run "nightsky flat" to
+  # capture the master flat (point camera at a uniformly lit surface first).
+  enabled: false
+  # Directory to store the master flat frame
+  directory: ./flats
+  # Number of flat frames to average into the master flat
+  count: 10

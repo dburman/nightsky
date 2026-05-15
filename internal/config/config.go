@@ -18,6 +18,7 @@ type Config struct {
 	Output   OutputConfig   `mapstructure:"output"    json:"output"`
 	Upload   UploadConfig   `mapstructure:"upload"    json:"upload"`
 	Dark     DarkConfig     `mapstructure:"dark"      json:"dark"`
+	Flat     FlatConfig     `mapstructure:"flat"      json:"flat"`
 }
 
 // CameraConfig identifies which camera backend and device to use.
@@ -172,6 +173,16 @@ type DarkConfig struct {
 	Count int `mapstructure:"count"     json:"count"`
 }
 
+// FlatConfig controls flat-field correction for lens vignetting.
+type FlatConfig struct {
+	// Enabled applies flat-field correction during capture.
+	Enabled bool `mapstructure:"enabled"   json:"enabled"`
+	// Directory where the master flat frame is stored.
+	Directory string `mapstructure:"directory" json:"directory"`
+	// Count: number of flat frames to average when capturing flats.
+	Count int `mapstructure:"count"     json:"count"`
+}
+
 // Load reads configuration from file and environment, applying defaults.
 func Load(configPath string) (*Config, error) {
 	v := viper.New()
@@ -281,6 +292,10 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("dark.enabled", false)
 	v.SetDefault("dark.directory", "./darks")
 	v.SetDefault("dark.count", 5)
+
+	v.SetDefault("flat.enabled", false)
+	v.SetDefault("flat.directory", "./flats")
+	v.SetDefault("flat.count", 10)
 }
 
 func validate(cfg *Config) error {

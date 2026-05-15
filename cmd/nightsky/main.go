@@ -14,6 +14,7 @@ import (
 	"github.com/dburman/nightsky/internal/capture"
 	"github.com/dburman/nightsky/internal/config"
 	"github.com/dburman/nightsky/internal/convert"
+	"github.com/dburman/nightsky/internal/flat"
 	"github.com/dburman/nightsky/internal/keogram"
 	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
@@ -41,6 +42,7 @@ func main() {
 		captureCmd(),
 		timelapseCmd(),
 		darkCmd(),
+		flatCmd(),
 		infoCmd(),
 		cleanCmd(),
 		versionCmd(),
@@ -403,6 +405,51 @@ func darkCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+// flatCmd captures flat frames for vignetting correction.
+func flatCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "flat",
+		Short: "Capture flat frames for vignetting correction",
+		Long:  "Capture and average multiple flat frames to build a master flat for lens vignetting correction. Point the camera at a uniformly lit surface (white screen, overcast sky) before running.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			cam, err := openCamera(cfg, logger)
+			if err != nil {
+				return err
+			}
+			if err := cam.Open(); err != nil {
+				return err
+			}
+			defer cam.Close()
+
+			flatMgr := flat.NewManager(cfg.Flat.Directory, cfg.Flat.Count, cam, logger)
+
+			// Use night settings (representative exposure for vignette pattern).
+			settings := camera.CaptureSettings{
+				Exposure: cfg.Night.Exposure,
+				Gain:     cfg.Night.Gain,
+				Binning:  cfg.Night.Binning,
+				Format:   camera.FormatRGB24,
+			}
+
+			fmt.Printf("Capturing %d flat frames (exposure=%v, gain=%.1f)...\n",
+				cfg.Flat.Count, settings.Exposure, settings.Gain)
+
+			if err := flatMgr.CaptureFlat(context.Background(), settings); err != nil {
+				return fmt.Errorf("flat capture failed: %w", err)
+			}
+
+			fmt.Println("Flat frame capture complete.")
+			return nil
+		},
+	}
 }
 
 // infoCmd displays camera information.
