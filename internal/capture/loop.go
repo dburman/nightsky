@@ -13,6 +13,7 @@ import (
 
 	"github.com/dburman/nightsky/internal/astro"
 	"github.com/dburman/nightsky/internal/camera"
+	"github.com/dburman/nightsky/internal/cloud"
 	"github.com/dburman/nightsky/internal/config"
 	"github.com/dburman/nightsky/internal/flat"
 	imgutil "github.com/dburman/nightsky/internal/image"
@@ -50,6 +51,7 @@ type Loop struct {
 	flatMgr         *flat.Manager
 	frameCount      int64
 	skipRemaining   int
+	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
 
 	// Callbacks for upload integration.
 	OnImageSaved func(path string, meta camera.CaptureMeta)
@@ -109,8 +111,24 @@ func (l *Loop) Run(ctx context.Context) error {
 
 			// End-of-night processing: fire before clearing nightSessionDir.
 			if l.mode == ModeNight && newMode == ModeDay {
-				if l.nightSessionDir != "" && l.OnNightEnd != nil {
-					l.OnNightEnd(filepath.Join(l.cfg.Output.Directory, l.nightSessionDir))
+				nightDir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
+				if l.nightSessionDir != "" {
+					// Flush cloud metrics before handing off to OnNightEnd.
+					if len(l.cloudMetrics) > 0 {
+						if err := cloud.WriteReport(nightDir, l.cloudMetrics); err != nil {
+							l.logger.Error("cloud report write failed", "error", err)
+						} else {
+							l.logger.Info("cloud coverage report written",
+								"dir", nightDir,
+								"frames", len(l.cloudMetrics),
+								"summary", cloud.SummaryLine(l.cloudMetrics),
+							)
+						}
+						l.cloudMetrics = nil
+					}
+					if l.OnNightEnd != nil {
+						l.OnNightEnd(nightDir)
+					}
 				}
 				l.nightSessionDir = ""
 			}
@@ -185,6 +203,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		if l.cfg.Output.Stretch.Enabled {
 			sc := l.cfg.Output.Stretch
 			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint)
+		}
+
+		// Cloud coverage metric — night frames only.
+		if l.mode == ModeNight {
+			m := cloud.Estimate(processedImg, result.Meta.Timestamp)
+			l.cloudMetrics = append(l.cloudMetrics, m)
 		}
 
 		// Apply overlay.
@@ -388,7 +412,8 @@ func pruneRawInDir(dir string) (int, error) {
 		if strings.HasPrefix(lower, "timelapse-") ||
 			strings.HasPrefix(lower, "keogram-") ||
 			strings.HasPrefix(lower, "startrails-") ||
-			strings.HasPrefix(lower, "wb-analysis-") {
+			strings.HasPrefix(lower, "wb-analysis-") ||
+			strings.HasPrefix(lower, "cloud-") {
 			continue
 		}
 
