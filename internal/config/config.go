@@ -41,6 +41,11 @@ type LocationConfig struct {
 	Longitude float64 `mapstructure:"longitude" json:"longitude"`
 	// Sun altitude angle in degrees to transition day/night (default -6 = civil twilight).
 	Angle float64 `mapstructure:"angle" json:"angle"`
+	// GPS enables automatic lat/lon lookup from a local gpsd daemon.
+	// When enabled, a fix is fetched at startup and overrides latitude/longitude.
+	GPS bool `mapstructure:"gps" json:"gps"`
+	// GPSAddr is the gpsd address (default "localhost:2947").
+	GPSAddr string `mapstructure:"gps_addr" json:"gps_addr"`
 }
 
 // ModeConfig holds capture settings for either day or night mode.
@@ -249,6 +254,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("location.latitude", 0.0)
 	v.SetDefault("location.longitude", 0.0)
 	v.SetDefault("location.angle", -6.0)
+	v.SetDefault("location.gps", false)
+	v.SetDefault("location.gps_addr", "localhost:2947")
 
 	// Day defaults
 	v.SetDefault("day.exposure", "1ms")

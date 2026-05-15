@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/camera/libcamera"
@@ -15,6 +16,7 @@ import (
 	"github.com/dburman/nightsky/internal/config"
 	"github.com/dburman/nightsky/internal/convert"
 	"github.com/dburman/nightsky/internal/flat"
+	"github.com/dburman/nightsky/internal/gps"
 	"github.com/dburman/nightsky/internal/keogram"
 	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
@@ -97,6 +99,23 @@ func captureCmd() *cobra.Command {
 			cfg, err := loadConfig()
 			if err != nil {
 				return fmt.Errorf("config: %w", err)
+			}
+
+			// GPS auto-location: fetch a fix from gpsd and override config lat/lon.
+			if cfg.Location.GPS {
+				gpsCtx, gpsCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				fix, err := gps.FetchFix(gpsCtx, cfg.Location.GPSAddr)
+				gpsCancel()
+				if err != nil {
+					logger.Warn("GPS fix failed, using config coordinates", "error", err)
+				} else {
+					logger.Info("GPS fix acquired",
+						"lat", fix.Latitude,
+						"lon", fix.Longitude,
+					)
+					cfg.Location.Latitude = fix.Latitude
+					cfg.Location.Longitude = fix.Longitude
+				}
 			}
 
 			cam, err := openCamera(cfg, logger)

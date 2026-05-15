@@ -20,6 +20,11 @@ location:
   # Sun altitude angle for day/night transition (degrees)
   # -6 = civil twilight (default), -12 = nautical, -18 = astronomical
   angle: -6
+  # GPS auto-location: fetch lat/lon from a local gpsd daemon at startup.
+  # Requires gpsd to be running (apt-get install gpsd). When a fix is
+  # acquired, it overrides the latitude/longitude values above.
+  gps: false
+  gps_addr: "localhost:2947"
 
 # Day mode settings (sun above angle threshold)
 day:
