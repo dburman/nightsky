@@ -592,6 +592,7 @@ function renderConfig(cfg) {
   const tl  = cfg.output.timelapse;
   const up  = cfg.upload;
   const dk  = cfg.dark;
+  const fl  = cfg.flat;
 
   const flipLabels = ['none', 'horizontal', 'vertical', 'both'];
   const flipLabel = flipLabels[c.flip] || String(c.flip);
@@ -612,6 +613,7 @@ function renderConfig(cfg) {
       ['JPEG Quality',      esc(m.quality)],
       ['Skip Frames',       esc(m.skip_frames)],
       ['Denoise',           `<span class="mono">${esc(m.denoise)}</span>`],
+      ['Metering Zone',     `<span class="badge blue">${esc(m.metering_zone || 'full')}</span>`],
       ['Cooler',            badge(m.cooler_enabled)],
       ['Cooler Target',     m.cooler_enabled ? esc(m.cooler_target) + ' °C' : '—'],
     ]);
@@ -637,6 +639,8 @@ function renderConfig(cfg) {
           ['Latitude',       `<span class="mono">${loc.latitude}°</span>`],
           ['Longitude',      `<span class="mono">${loc.longitude}°</span>`],
           ['Twilight Angle', `<span class="mono">${loc.angle}°</span>`],
+          ['GPS Auto-location', badge(loc.gps)],
+          ['GPS Address', loc.gps ? `<span class="mono">${esc(loc.gps_addr)}</span>` : '—'],
         ])}
       </div>
 
@@ -664,6 +668,7 @@ function renderConfig(cfg) {
           ['Cleanup Strategy', out.min_free_gb > 0 ? 'space-based' : out.days_to_keep > 0 ? 'time-based' : 'disabled'],
           ['Overlay',          badge(out.overlay)],
           ['Overlay Font',     esc(out.overlay_font_size) + 'pt'],
+          ['Prune Raw After',  out.prune_raw_after_days > 0 ? esc(out.prune_raw_after_days) + ' days' : '—'],
         ])}
       </div>
 
@@ -700,6 +705,34 @@ function renderConfig(cfg) {
           ['Enabled',   badge(dk.enabled)],
           ['Directory', `<span class="mono">${esc(dk.directory)}</span>`],
           ['Count',     esc(dk.count) + ' frames'],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Flat Field Correction</div>
+        ${kv([
+          ['Enabled',   badge(fl.enabled)],
+          ['Directory', `<span class="mono">${esc(fl.directory)}</span>`],
+          ['Count',     esc(fl.count) + ' frames'],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Histogram Stretch</div>
+        ${kv([
+          ['Enabled',     badge(out.stretch.enabled)],
+          ['Mode',        `<span class="badge blue">${esc(out.stretch.mode)}</span>`],
+          ['Black Point', out.stretch.mode === 'manual' ? esc(out.stretch.black_point) : '—'],
+          ['White Point', out.stretch.mode === 'manual' ? esc(out.stretch.white_point) : '—'],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">WebP Conversion</div>
+        ${kv([
+          ['Enabled',          badge(out.webp.enabled)],
+          ['Quality',          out.webp.enabled ? esc(out.webp.quality) : '—'],
+          ['Delete Originals', out.webp.enabled ? badge(out.webp.delete_originals) : '—'],
         ])}
       </div>
 

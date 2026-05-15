@@ -20,6 +20,12 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **HTTP upload** — POST images/videos to any HTTP endpoint with optional auth
 - **Metadata overlay** — Timestamp, exposure, gain, and sensor temperature rendered directly on images
 - **Automatic cleanup** — Space-based (`min_free_gb`) or time-based (`days_to_keep`) full-directory deletion; or `prune_raw_after_days` to delete only raw frames while keeping timelapse, keogram, star trails, and WB analysis permanently
+- **Flat field correction** — Correct lens vignetting by dividing each frame by a master flat frame (point camera at a uniformly lit surface and run `nightsky flat`). Eliminates gradient falloff at frame edges.
+- **Configurable metering zone** — Choose which sky region drives auto-exposure: `full` (whole frame), `center` (inner 50%-radius circle, ideal for zenith-pointing fisheye cameras), or `top` (top third, for horizon-facing cameras)
+- **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives points from the 0.5th/99.5th percentile of frame luminance; manual mode accepts explicit values. Does not affect dark/flat calibration.
+- **GPS auto-location** — Automatically fetches latitude/longitude from a local `gpsd` daemon at startup (requires `gpsd`), overriding config coordinates. Falls back gracefully to configured values if no fix is available.
+- **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs.
+- **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in dashboards.
 - **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date with Video, Keogram, Star Trails, and Images tabs; paginated lazy-loaded thumbnails; no external dependencies, embedded in the binary
 - **Single binary** — Cross-compiles to ARM64/ARMv7 for Raspberry Pi deployment
 
@@ -118,6 +124,7 @@ For the ZWO variant or ARMv7 targets, use `Dockerfile.build` via the Makefile ta
 - **rpicam-still** or **libcamera-still** — for Raspberry Pi CSI cameras (Bookworm uses `rpicam-still`; Bullseye uses `libcamera-still` — nightsky auto-detects both)
 - **libASICamera2 + libusb-1.0** — for ZWO cameras (only if built with `-tags zwo`)
 - **cwebp** — for WebP conversion (only if `output.webp.enabled: true`; install via `apt-get install webp`)
+- **gpsd** — for GPS auto-location (only if `location.gps: true`; `apt-get install gpsd`)
 
 ### Option 1: Docker Compose (recommended)
 
@@ -254,7 +261,12 @@ location:
   # Sun altitude angle for day/night transition (degrees)
   # -6 = civil twilight, -12 = nautical, -18 = astronomical
   angle: -6
+  # GPS auto-location: override lat/lon from gpsd at startup
+  gps: false
+  gps_addr: "localhost:2947"
 ```
+
+When `gps: true`, a fix is fetched from `gpsd` at startup and overrides `latitude`/`longitude`. Requires `gpsd` to be installed (`apt-get install gpsd`).
 
 ### Day/Night mode settings
 
@@ -277,6 +289,7 @@ day:
   quality: 95             # JPEG quality (1-100)
   skip_frames: 5          # Frames to discard after mode transition
   denoise: cdn_fast       # libcamera denoising: off, cdn_off, cdn_fast, cdn_hq
+  metering_zone: full
 
 night:
   exposure: 10s
@@ -294,6 +307,7 @@ night:
   quality: 95
   skip_frames: 1
   denoise: off
+  metering_zone: center   # "full", "center" (zenith), or "top"
   cooler_enabled: false   # ZWO TEC cooler
   cooler_target: -10      # Target temperature (°C)
 ```
@@ -317,6 +331,13 @@ output:
     crf: 20                 # constant-rate-factor quality (0 = use bitrate instead)
     bitrate: 2000k          # used only when crf: 0
     deflicker: true         # smooth per-frame brightness variation
+
+  # Histogram stretch applied to saved images (does not affect calibration)
+  stretch:
+    enabled: false
+    mode: auto        # "auto" (percentile) or "manual"
+    black_point: 0    # manual mode only
+    white_point: 255  # manual mode only
 
   # Prune raw frames after N days, keeping synthesized outputs (0 = disabled).
   # Combine with days_to_keep to remove entire directories after even longer.
@@ -361,6 +382,23 @@ dark:
   count: 5              # Frames to average when capturing darks
 ```
 
+### Flat field correction
+
+```yaml
+flat:
+  enabled: false          # Apply flat-field correction during capture
+  directory: ./flats      # Where the master flat frame is stored
+  count: 10               # Frames to average when capturing
+```
+
+Capture a master flat by pointing the camera at a uniformly lit surface (overcast sky, white screen, or T-shirt over lens) and running:
+
+```bash
+nightsky flat
+```
+
+The master flat is saved to `flat.directory/master_flat.png` and loaded automatically when `flat.enabled: true`.
+
 ---
 
 ## Usage
@@ -390,6 +428,7 @@ Commands:
   serve       Start the web UI server
   timelapse   Generate a timelapse video from captured images
   dark        Capture dark frames for calibration
+  flat        Capture flat frames for vignetting correction
   analyze     Analyse images and suggest white balance settings
   info        Display camera information
   clean       Remove old capture directories
@@ -445,6 +484,14 @@ nightsky dark
 ```
 
 Dark frames are saved to `dark.directory` (default `./darks/`) and are automatically loaded during capture when `dark.enabled` is true.
+
+### `nightsky flat`
+
+Captures flat frames for vignetting correction. Point the camera at a uniformly lit surface (overcast sky, white T-shirt over the lens, or lightbox) before running. The frames are averaged into a master flat saved to `flat.directory`.
+
+```bash
+nightsky flat
+```
 
 ### `nightsky info`
 
@@ -528,6 +575,7 @@ output/
 │   ├── keogram-2026-03-15.jpg
 │   ├── startrails-2026-03-15.jpg
 │   ├── wb-analysis-2026-03-15.txt
+│   ├── cloud-2026-03-15.csv              ← per-frame cloud coverage metrics
 │   └── .thumbs/            ← auto-generated thumbnail cache (160px JPEG)
 │       ├── allsky-20260315191503_160.jpg
 │       └── ...
@@ -536,6 +584,8 @@ output/
 darks/
 ├── dark_10000ms_gain200_bin1.png
 └── dark_1ms_gain1_bin1.png
+flats/
+└── master_flat.png
 ```
 
 ## Architecture
@@ -556,6 +606,9 @@ internal/
 ├── upload/            S3 and HTTP upload backends
 ├── web/               Embedded HTTP server and UI (no external dependencies)
 ├── whitebalance/      WB channel analysis and per-night adjustment suggestions
+├── flat/              Flat field correction — capture, normalize, apply per-frame
+├── cloud/             Per-frame cloud coverage metric (mean + stddev of sky region)
+├── gps/               GPS fix from gpsd (JSON streaming protocol, no external deps)
 └── config/            YAML configuration with viper
 ```
 
