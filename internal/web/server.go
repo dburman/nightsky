@@ -42,6 +42,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/config", s.handleConfig)
 	mux.HandleFunc("GET /api/captures", s.handleCaptures)
 	mux.HandleFunc("GET /api/captures/{date}/images", s.handleDateImages)
+	mux.HandleFunc("GET /latest", s.handleLatest)
 	mux.HandleFunc("GET /output/{path...}", s.handleOutput)
 	s.logger.Info("web UI started", "url", "http://localhost"+s.addr)
 	return http.ListenAndServe(s.addr, mux)
@@ -325,6 +326,81 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(buf.Bytes())
+}
+
+// handleLatest serves the most recently captured image. Useful for embedding a
+// live view in external dashboards — poll this endpoint to always show the
+// newest frame without knowing its filename.
+//
+// By default the full-resolution image is returned. Add ?w=N to get a
+// resized JPEG (same thumb mechanism as /output).
+func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
+	path, err := latestImagePath(s.cfg.Output.Directory)
+	if err != nil || path == "" {
+		http.Error(w, "no images found", http.StatusNotFound)
+		return
+	}
+
+	wStr := r.URL.Query().Get("w")
+	if wStr != "" {
+		width, err := strconv.Atoi(wStr)
+		if err == nil && width > 0 && width <= 1920 {
+			s.serveThumb(w, path, width)
+			return
+		}
+	}
+
+	// No-cache so external dashboards always fetch the freshest frame.
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	http.ServeFile(w, r, path)
+}
+
+// latestImagePath returns the absolute path of the most recently modified
+// captured image (jpg/png) across all date directories in outputDir.
+func latestImagePath(outputDir string) (string, error) {
+	dates, err := os.ReadDir(outputDir)
+	if err != nil {
+		return "", err
+	}
+
+	// Walk from newest date to oldest; return first image found.
+	sorted := make([]string, 0, len(dates))
+	for _, d := range dates {
+		if d.IsDir() && len(d.Name()) == 10 && d.Name()[4] == '-' {
+			sorted = append(sorted, d.Name())
+		}
+	}
+	slices.Sort(sorted)
+	slices.Reverse(sorted)
+
+	for _, date := range sorted {
+		dirPath := filepath.Join(outputDir, date)
+		files, err := os.ReadDir(dirPath)
+		if err != nil {
+			continue
+		}
+
+		// Files are already sorted by name (which is by timestamp). Pick the last one.
+		for i := len(files) - 1; i >= 0; i-- {
+			f := files[i]
+			if f.IsDir() {
+				continue
+			}
+			lower := strings.ToLower(f.Name())
+			// Skip synthesized outputs — we only want raw captured frames.
+			if strings.HasPrefix(lower, "timelapse-") ||
+				strings.HasPrefix(lower, "keogram-") ||
+				strings.HasPrefix(lower, "startrails-") ||
+				strings.HasPrefix(lower, "wb-analysis-") ||
+				strings.HasPrefix(lower, "cloud-") {
+				continue
+			}
+			if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+				return filepath.Join(dirPath, f.Name()), nil
+			}
+		}
+	}
+	return "", nil
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, v any) {
