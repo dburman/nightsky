@@ -50,6 +50,7 @@ func main() {
 		versionCmd(),
 		serveCmd(),
 		analyzeCmd(),
+		webpCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -626,5 +627,53 @@ func analyzeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&dir, "dir", "d", "", "image directory to analyse (default: most recent)")
+	return cmd
+}
+
+// webpCmd converts PNG images in a capture directory to WebP.
+func webpCmd() *cobra.Command {
+	var (
+		dir             string
+		quality         int
+		deleteOriginals bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "webp",
+		Short: "Convert captured PNGs to WebP",
+		Long:  "Converts all captured PNG images in a directory to WebP format using cwebp. Requires the 'webp' package (apt-get install webp). Skips keogram and star-trails files.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			if dir == "" {
+				dirs, err := capture.ListDateDirs(cfg.Output.Directory)
+				if err != nil || len(dirs) == 0 {
+					return fmt.Errorf("no capture directories found in %s", cfg.Output.Directory)
+				}
+				dir = dirs[0]
+				logger.Info("using most recent directory", "dir", dir)
+			}
+
+			if quality <= 0 {
+				quality = cfg.Output.WebP.Quality
+			}
+			if !cmd.Flags().Changed("delete-originals") {
+				deleteOriginals = cfg.Output.WebP.DeleteOriginals
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			return convert.ConvertPNGsToWebP(ctx, dir, quality, deleteOriginals, logger)
+		},
+	}
+
+	cmd.Flags().StringVarP(&dir, "dir", "d", "", "directory to convert (default: most recent)")
+	cmd.Flags().IntVarP(&quality, "quality", "q", 0, "WebP quality 0-100 (default: from config)")
+	cmd.Flags().BoolVar(&deleteOriginals, "delete-originals", false, "remove source PNGs after successful conversion (default: from config)")
 	return cmd
 }

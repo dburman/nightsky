@@ -431,6 +431,7 @@ Commands:
   dark        Capture dark frames for calibration
   flat        Capture flat frames for vignetting correction
   analyze     Analyse images and suggest white balance settings
+  webp        Convert captured PNGs to WebP
   info        Display camera information
   clean       Remove old capture directories
   version     Print version
@@ -576,6 +577,23 @@ Suggested: WB Red=61  WB Blue=67
   Suggested change: increase WB Red by 9, decrease WB Blue by 23.
   Apply gradually — one adjustment per night is recommended.
 ```
+
+### `nightsky webp`
+
+Converts captured PNG images in a directory to WebP. Requires `cwebp` (`apt-get install webp`). Skips keogram and star-trails files. Defaults to quality and delete-originals settings from your config.
+
+```bash
+# Most recent night
+nightsky webp
+
+# Specific directory
+nightsky webp --dir ./output/2026-05-14
+
+# Override quality and delete originals
+nightsky webp --dir ./output/2026-05-14 --quality 90 --delete-originals
+```
+
+This is the manual equivalent of the automatic conversion that runs at end of night when `output.webp.enabled: true`. Useful if the capture loop was stopped before dawn and the end-of-night processing never ran, or to convert historical directories.
 
 ---
 
