@@ -25,8 +25,9 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives points from the 0.5th/99.5th percentile of frame luminance; manual mode accepts explicit values. Does not affect dark/flat calibration.
 - **GPS auto-location** — Automatically fetches latitude/longitude from a local `gpsd` daemon at startup (requires `gpsd`), overriding config coordinates. Falls back gracefully to configured values if no fix is available.
 - **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs.
-- **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in dashboards.
-- **Web UI** — Built-in HTTP server (`nightsky serve`) for browsing captures by date with Video, Keogram, Star Trails, and Images tabs; paginated lazy-loaded thumbnails; no external dependencies, embedded in the binary
+- **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in external dashboards.
+- **Live metrics endpoint** — `GET /api/metrics` returns the current capture state as JSON (mode, exposure, gain, mean brightness, cloud coverage, sensor temperature, frame count). Written to `.metrics.json` after every frame so it works across process boundaries in Docker Compose and systemd split-service deployments.
+- **Web UI** — Built-in HTTP server (`nightsky serve`) with Configuration, Captures, and Live tabs. Captures tab: browse by date with Video, Keogram, Star Trails, and Images sub-tabs, paginated lazy-loaded thumbnails. Live tab: auto-refreshing current frame with real-time metrics sidebar (exposure, gain, brightness, cloud coverage bar, sensor temperature). No external dependencies, embedded in the binary.
 - **Single binary** — Cross-compiles to ARM64/ARMv7 for Raspberry Pi deployment
 
 ---
@@ -453,7 +454,7 @@ nightsky capture --log-level debug
 
 ### `nightsky serve`
 
-Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected. Open the URL in a browser to browse captures by date across four sub-tabs (Video, Keogram, Star Trails, Images) and inspect the current configuration.
+Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected.
 
 ```bash
 nightsky serve
@@ -461,7 +462,22 @@ nightsky serve --addr :8080
 nightsky serve --config /etc/nightsky/nightsky.yaml --addr 0.0.0.0:8080
 ```
 
-The UI is served at `http://localhost:8080` by default. It is embedded in the binary with no external dependencies.
+The UI is served at `http://localhost:8080` by default. It is embedded in the binary with no external dependencies. Three tabs are available:
+
+- **Configuration** — current config values rendered as a read-only dashboard
+- **Captures** — browse nights by date; sub-tabs for Video, Keogram, Star Trails, and Images with paginated lazy-loaded thumbnails
+- **Live** — auto-refreshing current frame (polls `/latest` every 5 s) alongside a real-time metrics sidebar showing mode, exposure, gain, brightness, cloud coverage, and sensor temperature; shows "capture not running" when the capture loop is stopped
+
+HTTP API endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `GET /latest` | Most recent captured image; `?w=N` resizes |
+| `GET /api/metrics` | Live capture state as JSON (mode, exposure, gain, brightness, cloud coverage, temp, frame count) |
+| `GET /api/captures` | List of capture date directories |
+| `GET /api/captures/{date}/images` | Images, video, keogram, star trails for a date |
+| `GET /api/config` | Current configuration as JSON |
+| `GET /api/status` | Version and camera type |
 
 ### `nightsky timelapse`
 
@@ -581,6 +597,7 @@ output/
 │       └── ...
 ├── 2026-03-16/
 │   └── ...
+.metrics.json               ← live capture state (updated every frame, read by /api/metrics)
 darks/
 ├── dark_10000ms_gain200_bin1.png
 └── dark_1ms_gain1_bin1.png
@@ -609,6 +626,7 @@ internal/
 ├── flat/              Flat field correction — capture, normalize, apply per-frame
 ├── cloud/             Per-frame cloud coverage metric (mean + stddev of sky region)
 ├── gps/               GPS fix from gpsd (JSON streaming protocol, no external deps)
+├── metrics/           Live capture state written per-frame, read by /api/metrics
 └── config/            YAML configuration with viper
 ```
 
