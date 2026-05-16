@@ -200,8 +200,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			processedImg = l.flatMgr.Apply(processedImg)
 		}
 
-		// Histogram stretch.
-		if l.cfg.Output.Stretch.Enabled {
+		// Histogram stretch — night only; daytime images have full dynamic range
+		// and stretching washes out colour and blows out highlights.
+		if l.cfg.Output.Stretch.Enabled && l.mode == ModeNight {
 			sc := l.cfg.Output.Stretch
 			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint, sc.AutoBlackPercentile, sc.AutoWhitePercentile)
 		}
