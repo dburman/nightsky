@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	_ "golang.org/x/image/webp"
 )
 
 // DefaultMaxMeanBrightness is the mean pixel brightness (0–255) above which a
@@ -40,7 +42,17 @@ func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, lo
 			continue
 		}
 		lower := strings.ToLower(e.Name())
-		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+		// Skip synthesized outputs — they have different dimensions or represent
+		// aggregated data, not individual captures.
+		if strings.HasPrefix(lower, "timelapse-") ||
+			strings.HasPrefix(lower, "keogram-") ||
+			strings.HasPrefix(lower, "startrails-") ||
+			strings.HasPrefix(lower, "wb-analysis-") ||
+			strings.HasPrefix(lower, "cloud-") {
+			continue
+		}
+		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
+			strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".webp") {
 			files = append(files, filepath.Join(dateDir, e.Name()))
 		}
 	}
@@ -89,6 +101,16 @@ func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, lo
 		if result == nil {
 			result = toRGBA(img)
 			used++
+			continue
+		}
+
+		// Skip frames whose dimensions don't match the first frame — they are
+		// likely synthesized outputs or captures from a different mode/binning.
+		if img.Bounds().Dx() != result.Bounds().Dx() || img.Bounds().Dy() != result.Bounds().Dy() {
+			logger.Warn("star trails: skipping mismatched image size", "path", path,
+				"got", fmt.Sprintf("%dx%d", img.Bounds().Dx(), img.Bounds().Dy()),
+				"want", fmt.Sprintf("%dx%d", result.Bounds().Dx(), result.Bounds().Dy()))
+			skipped++
 			continue
 		}
 
