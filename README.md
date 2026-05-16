@@ -22,7 +22,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Automatic cleanup** — Space-based (`min_free_gb`) or time-based (`days_to_keep`) full-directory deletion; or `prune_raw_after_days` to delete only raw frames while keeping timelapse, keogram, star trails, and WB analysis permanently
 - **Flat field correction** — Correct lens vignetting by dividing each frame by a master flat frame (point camera at a uniformly lit surface and run `nightsky flat`). Eliminates gradient falloff at frame edges.
 - **Configurable metering zone** — Choose which sky region drives auto-exposure: `full` (whole frame), `center` (inner 50%-radius circle, ideal for zenith-pointing fisheye cameras), or `top` (top third, for horizon-facing cameras)
-- **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives points from the 0.5th/99.5th percentile of frame luminance; manual mode accepts explicit values. Does not affect dark/flat calibration.
+- **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives black/white points from configurable percentiles of frame luminance (default 10th/99.9th — tuned for dark skies); manual mode accepts explicit values. Does not affect dark/flat calibration.
 - **GPS auto-location** — Automatically fetches latitude/longitude from a local `gpsd` daemon at startup (requires `gpsd`), overriding config coordinates. Falls back gracefully to configured values if no fix is available.
 - **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs.
 - **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in external dashboards.
@@ -336,9 +336,18 @@ output:
   # Histogram stretch applied to saved images (does not affect calibration)
   stretch:
     enabled: false
-    mode: auto        # "auto" (percentile) or "manual"
-    black_point: 0    # manual mode only
-    white_point: 255  # manual mode only
+    mode: auto        # "auto" (percentile-based) or "manual"
+
+    # Auto mode — tune percentiles for your sky conditions:
+    #   auto_black_percentile: higher = sky goes darker = more stars visible.
+    #     Dark sites (Bortle 1-3): 10–15. Light-polluted sites: 2–5.
+    #   auto_white_percentile: higher = more headroom before bright stars clip.
+    auto_black_percentile: 10    # 10th percentile — good default for dark skies
+    auto_white_percentile: 99.9  # 99.9th percentile — preserves star brightness
+
+    # Manual mode — explicit input levels mapped to black and white:
+    black_point: 15   # input level mapped to black
+    white_point: 220  # input level mapped to white
 
   # Prune raw frames after N days, keeping synthesized outputs (0 = disabled).
   # Combine with days_to_keep to remove entire directories after even longer.
