@@ -40,7 +40,7 @@ func DefaultConfig() Config {
 }
 
 // Generate creates a timelapse video from all images in the given directory.
-// The output file is written to <dir>/timelapse.mp4.
+// The output file is written to <dir>/timelapse-<date>.mp4.
 func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Logger) (string, error) {
 	// Verify ffmpeg is available.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -72,8 +72,9 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 	}
 	defer os.Remove(listPath)
 
-	outputPath := filepath.Join(imageDir, "timelapse.mp4")
-	tmpOutput := filepath.Join(imageDir, "timelapse.tmp.mp4")
+	date := filepath.Base(imageDir)
+	outputPath := filepath.Join(imageDir, "timelapse-"+date+".mp4")
+	tmpOutput := filepath.Join(imageDir, "timelapse-"+date+".tmp.mp4")
 
 	// Build ffmpeg command.
 	args := []string{
