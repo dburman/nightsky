@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	_ "golang.org/x/image/webp"
 	"log/slog"
 	"net/http"
 	"os"
@@ -122,7 +123,7 @@ func (s *Server) handleCaptures(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			lower := strings.ToLower(f.Name())
-			if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+			if isImageFile(lower) {
 				imageCount++
 			}
 			if strings.HasSuffix(lower, ".mp4") {
@@ -204,7 +205,7 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if !strings.HasSuffix(lower, ".jpg") && !strings.HasSuffix(lower, ".jpeg") && !strings.HasSuffix(lower, ".png") {
+		if !isImageFile(lower) {
 			continue
 		}
 
@@ -411,12 +412,19 @@ func latestImagePath(outputDir string) (string, error) {
 				strings.HasPrefix(lower, "cloud-") {
 				continue
 			}
-			if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+			if isImageFile(lower) {
 				return filepath.Join(dirPath, f.Name()), nil
 			}
 		}
 	}
 	return "", nil
+}
+
+func isImageFile(lower string) bool {
+	return strings.HasSuffix(lower, ".jpg") ||
+		strings.HasSuffix(lower, ".jpeg") ||
+		strings.HasSuffix(lower, ".png") ||
+		strings.HasSuffix(lower, ".webp")
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, v any) {
