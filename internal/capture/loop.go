@@ -203,7 +203,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// Histogram stretch.
 		if l.cfg.Output.Stretch.Enabled {
 			sc := l.cfg.Output.Stretch
-			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint)
+			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint, sc.AutoBlackPercentile, sc.AutoWhitePercentile)
 		}
 
 		// Cloud coverage metric — night frames only.

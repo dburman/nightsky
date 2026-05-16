@@ -806,10 +806,12 @@ function renderConfig(cfg) {
       <div class="card">
         <div class="card-title">Histogram Stretch</div>
         ${kv([
-          ['Enabled',     badge(out.stretch.enabled)],
-          ['Mode',        `<span class="badge blue">${esc(out.stretch.mode)}</span>`],
-          ['Black Point', out.stretch.mode === 'manual' ? esc(out.stretch.black_point) : '—'],
-          ['White Point', out.stretch.mode === 'manual' ? esc(out.stretch.white_point) : '—'],
+          ['Enabled',           badge(out.stretch.enabled)],
+          ['Mode',              `<span class="badge blue">${esc(out.stretch.mode)}</span>`],
+          ['Black Percentile',  out.stretch.mode === 'auto' ? `<span class="mono">${esc(out.stretch.auto_black_percentile)}%</span>` : '—'],
+          ['White Percentile',  out.stretch.mode === 'auto' ? `<span class="mono">${esc(out.stretch.auto_white_percentile)}%</span>` : '—'],
+          ['Black Point',       out.stretch.mode === 'manual' ? esc(out.stretch.black_point) : '—'],
+          ['White Point',       out.stretch.mode === 'manual' ? esc(out.stretch.white_point) : '—'],
         ])}
       </div>
 

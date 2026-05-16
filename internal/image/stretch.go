@@ -12,11 +12,11 @@ import (
 // detail in faint night-sky images without clipping bright stars.
 //
 // The original image data is never modified; a new *image.RGBA is returned.
-func Stretch(img image.Image, mode string, blackPoint, whitePoint int) image.Image {
+func Stretch(img image.Image, mode string, blackPoint, whitePoint int, autoBlackPct, autoWhitePct float64) image.Image {
 	rgba := toRGBAStretch(img)
 
 	if mode == "auto" {
-		blackPoint, whitePoint = autoLevels(rgba)
+		blackPoint, whitePoint = autoLevels(rgba, autoBlackPct, autoWhitePct)
 	}
 
 	if blackPoint >= whitePoint {
@@ -39,9 +39,9 @@ func Stretch(img image.Image, mode string, blackPoint, whitePoint int) image.Ima
 	return out
 }
 
-// autoLevels returns the 0.5th and 99.5th percentile luminance values as
+// autoLevels returns the blackPct and whitePct percentile luminance values as
 // black and white points. Sampling every 4th pixel keeps it fast on large images.
-func autoLevels(img *image.RGBA) (black, white int) {
+func autoLevels(img *image.RGBA, blackPct, whitePct float64) (black, white int) {
 	b := img.Bounds()
 	pix := img.Pix
 	stride := img.Stride
@@ -63,8 +63,10 @@ func autoLevels(img *image.RGBA) (black, white int) {
 
 	sort.Ints(lums)
 	n := len(lums)
-	black = lums[max(0, n/200)]      // 0.5th percentile
-	white = lums[min(n-1, n*199/200)] // 99.5th percentile
+	blackIdx := int(float64(n) * blackPct / 100.0)
+	whiteIdx := int(float64(n) * whitePct / 100.0)
+	black = lums[max(0, min(n-1, blackIdx))]
+	white = lums[max(0, min(n-1, whiteIdx))]
 	if black >= white {
 		return 0, 255
 	}

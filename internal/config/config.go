@@ -130,6 +130,15 @@ type StretchConfig struct {
 	BlackPoint int `mapstructure:"black_point"  json:"black_point"`
 	// WhitePoint is the input level (0–255) mapped to white in manual mode.
 	WhitePoint int `mapstructure:"white_point"  json:"white_point"`
+	// AutoBlackPercentile is the percentile used for the black point in auto
+	// mode (0–100). Higher values push the black point closer to the sky
+	// background, making the sky go darker and revealing faint stars.
+	// Default 10 works well for dark sites; reduce toward 1 for light-polluted skies.
+	AutoBlackPercentile float64 `mapstructure:"auto_black_percentile" json:"auto_black_percentile"`
+	// AutoWhitePercentile is the percentile used for the white point in auto
+	// mode (0–100). Higher values preserve more star brightness before clipping.
+	// Default 99.9 avoids clipping all but the very brightest pixels.
+	AutoWhitePercentile float64 `mapstructure:"auto_white_percentile" json:"auto_white_percentile"`
 }
 
 // WebPConfig controls end-of-night PNG→WebP conversion.
@@ -304,6 +313,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.stretch.mode", "auto")
 	v.SetDefault("output.stretch.black_point", 0)
 	v.SetDefault("output.stretch.white_point", 255)
+	v.SetDefault("output.stretch.auto_black_percentile", 10.0)
+	v.SetDefault("output.stretch.auto_white_percentile", 99.9)
 	v.SetDefault("output.timelapse.enabled", true)
 	v.SetDefault("output.timelapse.fps", 25)
 	v.SetDefault("output.timelapse.bitrate", "2000k")
