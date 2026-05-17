@@ -82,9 +82,19 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 		"-r", fmt.Sprintf("%d", cfg.FPS),
 		"-f", "concat",
 		"-safe", "0",
+	}
+
+	// ffmpeg's format probing misidentifies WebP RIFF containers as MJPEG.
+	// Force the WebP decoder when all input frames are WebP; the flag must
+	// appear before -i to apply to the input stream.
+	if allWebP(images) {
+		args = append(args, "-c:v", "webp")
+	}
+
+	args = append(args,
 		"-i", listPath,
 		"-vcodec", cfg.Codec,
-	}
+	)
 
 	// Quality: CRF takes precedence over fixed bitrate.
 	if cfg.CRF > 0 {
@@ -167,6 +177,17 @@ func collectImages(dir string) ([]string, error) {
 
 	sort.Strings(images)
 	return images, nil
+}
+
+// allWebP returns true when every image in the list is a WebP file. Used to
+// decide whether to force the WebP input decoder.
+func allWebP(images []string) bool {
+	for _, img := range images {
+		if !strings.HasSuffix(strings.ToLower(img), ".webp") {
+			return false
+		}
+	}
+	return len(images) > 0
 }
 
 // writeFileList writes an ffmpeg concat demuxer file list.
