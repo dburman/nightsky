@@ -134,7 +134,10 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 	return outputPath, nil
 }
 
-// collectImages returns sorted image file paths from a directory.
+// collectImages returns sorted captured-image file paths from a directory.
+// Synthesized outputs (keogram, startrails, timelapse, WB analysis, cloud
+// report) are excluded — they have different dimensions or frame rates and
+// must not appear in the timelapse frame sequence.
 func collectImages(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -147,9 +150,17 @@ func collectImages(dir string) ([]string, error) {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
+		if strings.HasPrefix(name, "timelapse-") ||
+			strings.HasPrefix(name, "keogram-") ||
+			strings.HasPrefix(name, "startrails-") ||
+			strings.HasPrefix(name, "wb-analysis-") ||
+			strings.HasPrefix(name, "cloud-") {
+			continue
+		}
 		if strings.HasSuffix(name, ".jpg") ||
 			strings.HasSuffix(name, ".jpeg") ||
-			strings.HasSuffix(name, ".png") {
+			strings.HasSuffix(name, ".png") ||
+			strings.HasSuffix(name, ".webp") {
 			images = append(images, filepath.Join(dir, entry.Name()))
 		}
 	}

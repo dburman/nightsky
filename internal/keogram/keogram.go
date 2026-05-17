@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	_ "golang.org/x/image/webp"
 )
 
 // outputHeight is the fixed pixel height of the generated keogram.
@@ -47,7 +49,17 @@ func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, lo
 			continue
 		}
 		lower := strings.ToLower(e.Name())
-		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+		// Skip synthesized outputs — they have different dimensions or represent
+		// aggregated data, not individual captures.
+		if strings.HasPrefix(lower, "timelapse-") ||
+			strings.HasPrefix(lower, "keogram-") ||
+			strings.HasPrefix(lower, "startrails-") ||
+			strings.HasPrefix(lower, "wb-analysis-") ||
+			strings.HasPrefix(lower, "cloud-") {
+			continue
+		}
+		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
+			strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".webp") {
 			files = append(files, filepath.Join(dateDir, e.Name()))
 		}
 	}

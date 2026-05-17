@@ -115,8 +115,24 @@ type OutputConfig struct {
 	Stretch StretchConfig `mapstructure:"stretch"          json:"stretch"`
 	// Timelapse settings.
 	Timelapse TimelapseConfig `mapstructure:"timelapse"        json:"timelapse"`
+	// Keogram settings.
+	Keogram KeogramConfig `mapstructure:"keogram"          json:"keogram"`
+	// StarTrails settings.
+	StarTrails StarTrailsConfig `mapstructure:"startrails"       json:"startrails"`
 	// WebP conversion settings.
 	WebP WebPConfig `mapstructure:"webp"             json:"webp"`
+}
+
+// KeogramConfig controls end-of-night keogram generation.
+type KeogramConfig struct {
+	// Enabled generates a keogram at end of night (default true).
+	Enabled bool `mapstructure:"enabled" json:"enabled"`
+}
+
+// StarTrailsConfig controls end-of-night star trails generation.
+type StarTrailsConfig struct {
+	// Enabled generates a star trails image at end of night (default true).
+	Enabled bool `mapstructure:"enabled" json:"enabled"`
 }
 
 // StretchConfig controls histogram stretching applied to saved images.
@@ -321,6 +337,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.codec", "libx264")
 	v.SetDefault("output.timelapse.crf", 0)
 	v.SetDefault("output.timelapse.deflicker", false)
+
+	v.SetDefault("output.keogram.enabled", true)
+	v.SetDefault("output.startrails.enabled", true)
 
 	v.SetDefault("output.webp.enabled", false)
 	v.SetDefault("output.webp.quality", 85)

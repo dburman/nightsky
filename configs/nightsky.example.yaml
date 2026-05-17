@@ -52,9 +52,9 @@ day:
 # is too bright; lower max_gain if amp glow appears at the frame edges.
 night:
   exposure: 4s
-  max_exposure: 30s
+  max_exposure: 15.5s       # IMX462 maxes out at 15.5x
   gain: 1.5
-  max_gain: 10.5 
+  max_gain: 10.5            # IMX462 maxes out at 10.5x for analog gain
   auto_exposure: true
   target_brightness: 70     # IMX462 is very sensitive — keep sky background dark
   delay: 5s
@@ -64,7 +64,7 @@ night:
   awb: false
   image_type: png
   quality: 95
-  skip_frames: 4
+  skip_frames: 2
   denoise: off
   # Metering zone for auto-exposure: "full", "center" (zenith), or "top"
   # "center" is recommended for upward-pointing all-sky cameras — it meters
@@ -121,13 +121,19 @@ output:
     black_point: 15  # manual mode only
     white_point: 220 # manual mode only
 
+  # Per-output enable flags — set to false to skip that step at end of night.
+  keogram:
+    enabled: true
+  startrails:
+    enabled: true
+
   timelapse:
     enabled: true
     fps: 25
     codec: libx265          # libx264 or libx265
     # Quality — choose CRF or bitrate (CRF takes precedence when non-zero):
-    # CRF (recommended): 18–23 for libx264, 24–28 for libx265. Lower = better.
-    crf: 25
+    # CRF (recommended): 18–23 for libx264, 23–28 for libx265. Lower = better.
+    crf: 23
     bitrate: 2000k          # used only when crf is 0
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses.
@@ -137,7 +143,7 @@ output:
   webp:
     enabled: true 
     # Lossy quality 0–100 (85 is a good balance of size vs. quality)
-    quality: 90 
+    quality: 95 
     # Remove the original PNG after successful conversion
     delete_originals: true 
 

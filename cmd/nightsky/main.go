@@ -51,6 +51,7 @@ func main() {
 		serveCmd(),
 		analyzeCmd(),
 		webpCmd(),
+		processCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -189,97 +190,7 @@ func captureCmd() *cobra.Command {
 
 			// Wire up end-of-night callback for timelapse + upload.
 			loop.OnNightEnd = func(dateDir string) {
-				logger.Info("end of night processing", "dir", dateDir)
-
-				// Timelapse (ffmpeg) and keogram run in parallel — they are
-				// independent and use different CPU resources.
-				var wg sync.WaitGroup
-
-				if cfg.Output.Timelapse.Enabled {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
-						tlCfg := timelapse.Config{
-							FPS:       cfg.Output.Timelapse.FPS,
-							Bitrate:   cfg.Output.Timelapse.Bitrate,
-							Codec:     cfg.Output.Timelapse.Codec,
-							CRF:       cfg.Output.Timelapse.CRF,
-							Deflicker: cfg.Output.Timelapse.Deflicker,
-						}
-						videoPath, err := timelapse.Generate(ctx, dateDir, tlCfg, logger)
-						if err != nil {
-							logger.Error("timelapse generation failed", "error", err)
-							return
-						}
-						if cfg.Upload.UploadTimelapse {
-							if s3Uploader != nil {
-								go func() {
-									if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
-										logger.Error("S3 timelapse upload failed", "error", err)
-									}
-								}()
-							}
-							if httpUploader != nil {
-								go func() {
-									if err := httpUploader.Upload(ctx, videoPath); err != nil {
-										logger.Error("HTTP timelapse upload failed", "error", err)
-									}
-								}()
-							}
-						}
-					}()
-				}
-
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
-						logger.Error("keogram generation failed", "error", err)
-					}
-				}()
-
-				wg.Wait()
-
-				// Star trails runs after timelapse+keogram complete — it is the
-				// most memory-intensive task and benefits from others having
-				// released their allocations first.
-				if _, err := startrails.Generate(ctx, dateDir, startrails.DefaultMaxMeanBrightness, logger); err != nil {
-					logger.Error("star trails generation failed", "error", err)
-				}
-
-				// White balance analysis.
-				wbResults := map[string]*whitebalance.Result{}
-				nightResult, err := whitebalance.Analyze(dateDir, whitebalance.ModeSettings{
-					WBRed:      cfg.Night.WBRed,
-					WBBlue:     cfg.Night.WBBlue,
-					AWB:        cfg.Night.AWB,
-					Label:      "Night",
-					CameraType: cfg.Camera.Type,
-				})
-				if err != nil {
-					logger.Warn("WB analysis failed", "error", err)
-				} else {
-					wbResults["Night"] = nightResult
-				}
-				if len(wbResults) > 0 {
-					if err := whitebalance.WriteReport(dateDir, wbResults); err != nil {
-						logger.Error("WB report write failed", "error", err)
-					} else {
-						logger.Info("WB analysis written", "dir", dateDir)
-					}
-				}
-
-				// WebP conversion — runs after all generation steps so the
-				// timelapse input list is never broken by missing PNGs.
-				if cfg.Output.WebP.Enabled {
-					if err := convert.ConvertPNGsToWebP(ctx, dateDir,
-						cfg.Output.WebP.Quality,
-						cfg.Output.WebP.DeleteOriginals,
-						logger,
-					); err != nil {
-						logger.Error("webp conversion failed", "error", err)
-					}
-				}
+				runNightEndProcessing(ctx, dateDir, cfg, s3Uploader, httpUploader, logger)
 
 				// Prune raw images from older nights, keeping synthesized outputs.
 				if cfg.Output.PruneRawAfterDays > 0 {
@@ -627,6 +538,161 @@ func analyzeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&dir, "dir", "d", "", "image directory to analyse (default: most recent)")
+	return cmd
+}
+
+// runNightEndProcessing runs the full end-of-night synthesis suite for dateDir:
+// timelapse, keogram, star trails, WB analysis, and WebP conversion.
+// Disk cleanup (prune/clean) is intentionally excluded so callers can apply
+// their own policy (the capture loop's OnNightEnd adds cleanup on top of this).
+func runNightEndProcessing(
+	ctx context.Context,
+	dateDir string,
+	cfg *config.Config,
+	s3Uploader *upload.S3Uploader,
+	httpUploader *upload.HTTPUploader,
+	logger *slog.Logger,
+) {
+	logger.Info("end of night processing", "dir", dateDir)
+
+	// Timelapse and keogram run in parallel — they are independent and use
+	// different CPU resources (ffmpeg vs. Go image decoding).
+	var wg sync.WaitGroup
+
+	if cfg.Output.Timelapse.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tlCfg := timelapse.Config{
+				FPS:       cfg.Output.Timelapse.FPS,
+				Bitrate:   cfg.Output.Timelapse.Bitrate,
+				Codec:     cfg.Output.Timelapse.Codec,
+				CRF:       cfg.Output.Timelapse.CRF,
+				Deflicker: cfg.Output.Timelapse.Deflicker,
+			}
+			videoPath, err := timelapse.Generate(ctx, dateDir, tlCfg, logger)
+			if err != nil {
+				logger.Error("timelapse generation failed", "error", err)
+				return
+			}
+			if cfg.Upload.UploadTimelapse {
+				if s3Uploader != nil {
+					go func() {
+						if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
+							logger.Error("S3 timelapse upload failed", "error", err)
+						}
+					}()
+				}
+				if httpUploader != nil {
+					go func() {
+						if err := httpUploader.Upload(ctx, videoPath); err != nil {
+							logger.Error("HTTP timelapse upload failed", "error", err)
+						}
+					}()
+				}
+			}
+		}()
+	}
+
+	if cfg.Output.Keogram.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
+				logger.Error("keogram generation failed", "error", err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Star trails runs after timelapse+keogram complete — it is the most
+	// memory-intensive task and benefits from others having released their
+	// allocations first.
+	if cfg.Output.StarTrails.Enabled {
+		if _, err := startrails.Generate(ctx, dateDir, startrails.DefaultMaxMeanBrightness, logger); err != nil {
+			logger.Error("star trails generation failed", "error", err)
+		}
+	}
+
+	// White balance analysis.
+	wbResults := map[string]*whitebalance.Result{}
+	nightResult, err := whitebalance.Analyze(dateDir, whitebalance.ModeSettings{
+		WBRed:      cfg.Night.WBRed,
+		WBBlue:     cfg.Night.WBBlue,
+		AWB:        cfg.Night.AWB,
+		Label:      "Night",
+		CameraType: cfg.Camera.Type,
+	})
+	if err != nil {
+		logger.Warn("WB analysis failed", "error", err)
+	} else {
+		wbResults["Night"] = nightResult
+	}
+	if len(wbResults) > 0 {
+		if err := whitebalance.WriteReport(dateDir, wbResults); err != nil {
+			logger.Error("WB report write failed", "error", err)
+		} else {
+			logger.Info("WB analysis written", "dir", dateDir)
+		}
+	}
+
+	// WebP conversion — runs after all generation steps so the timelapse
+	// input list is never broken by missing PNGs.
+	if cfg.Output.WebP.Enabled {
+		if err := convert.ConvertPNGsToWebP(ctx, dateDir,
+			cfg.Output.WebP.Quality,
+			cfg.Output.WebP.DeleteOriginals,
+			logger,
+		); err != nil {
+			logger.Error("webp conversion failed", "error", err)
+		}
+	}
+}
+
+// processCmd runs the full end-of-night processing suite on an existing
+// capture directory without needing the capture loop to have completed.
+// Useful when capture was interrupted before dawn or for reprocessing a night.
+func processCmd() *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:   "process",
+		Short: "Run end-of-night processing on a capture directory",
+		Long:  "Generates timelapse, keogram, star trails, white balance analysis, and WebP conversion for an existing capture directory. Respects the enabled/disabled flags in config for each output type.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+
+			if dir == "" {
+				dirs, err := capture.ListDateDirs(cfg.Output.Directory)
+				if err != nil || len(dirs) == 0 {
+					return fmt.Errorf("no capture directories found in %s", cfg.Output.Directory)
+				}
+				dir = dirs[0]
+				logger.Info("using most recent directory", "dir", dir)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				sig := <-sigChan
+				logger.Info("received signal, stopping", "signal", sig)
+				cancel()
+			}()
+
+			runNightEndProcessing(ctx, dir, cfg, nil, nil, logger)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVarP(&dir, "dir", "d", "", "capture directory to process (default: most recent)")
 	return cmd
 }
 

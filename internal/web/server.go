@@ -64,8 +64,13 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	// Return a sanitized copy — never expose credentials over the API.
+	cfg := *s.cfg
+	if cfg.Upload.HTTP.Authorization != "" {
+		cfg.Upload.HTTP.Authorization = "[redacted]"
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.cfg)
+	json.NewEncoder(w).Encode(cfg)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
