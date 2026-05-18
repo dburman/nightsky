@@ -43,6 +43,21 @@ func NewExposureController(
 	minGain, maxGain float64,
 	logger *slog.Logger,
 ) *ExposureController {
+	// Clamp initial values to bounds so seeding from a different mode never
+	// starts the controller outside its legal range.
+	if maxExposure > 0 && initExposure > maxExposure {
+		initExposure = maxExposure
+	}
+	if initExposure < minExposure {
+		initExposure = minExposure
+	}
+	if maxGain > 0 && initGain > maxGain {
+		initGain = maxGain
+	}
+	if minGain > 0 && initGain < minGain {
+		initGain = minGain
+	}
+
 	return &ExposureController{
 		TargetBrightness: targetBrightness,
 		Exposure:         initExposure,
