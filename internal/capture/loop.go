@@ -331,13 +331,14 @@ func (l *Loop) initMode() {
 
 	modeCfg := l.modeConfig()
 
-	// Holy Grail: seed the new controller with the current exposure and gain
-	// rather than the configured initial values. This prevents a hard jump at
-	// the day↔night transition — the auto-exposure algorithm ramps naturally
-	// from wherever it was to the new mode's target brightness.
+	// Holy Grail: at dusk (day→night), seed the new controller with the current
+	// exposure/gain so the algorithm ramps naturally into darkness rather than
+	// jumping to the configured night defaults. At dawn (night→day), skip this
+	// and use the configured day defaults instead — the skip-frames warmup cycle
+	// then converges from a known starting point, exactly like first startup.
 	initExposure := modeCfg.Exposure
 	initGain := modeCfg.Gain
-	if l.exposureCtrl != nil {
+	if l.exposureCtrl != nil && l.mode == ModeNight {
 		initExposure = l.exposureCtrl.Exposure
 		initGain = l.exposureCtrl.Gain
 	}
