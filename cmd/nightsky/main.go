@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -570,7 +571,14 @@ func runNightEndProcessing(
 				CRF:       cfg.Output.Timelapse.CRF,
 				Deflicker: cfg.Output.Timelapse.Deflicker,
 			}
-			videoPath, err := timelapse.Generate(ctx, dateDir, tlCfg, logger)
+			date := filepath.Base(dateDir)
+			var videoPath string
+			var err error
+			if cfg.Output.Timelapse.SegmentFrames > 0 {
+				videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
+			} else {
+				videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
+			}
 			if err != nil {
 				logger.Error("timelapse generation failed", "error", err)
 				return

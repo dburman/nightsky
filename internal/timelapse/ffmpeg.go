@@ -20,7 +20,7 @@ type Config struct {
 	Bitrate string
 	Codec   string
 	// CRF sets the constant-rate-factor quality level (0 = use Bitrate instead).
-	// Typical values: 18–23 for libx264, 24–28 for libx265.
+	// Typical values: 18–23 for libx264, 24–28 for libx265, 30–45 for AV1.
 	// Lower = better quality, larger file. CRF takes precedence over Bitrate.
 	CRF int
 	// Deflicker smooths per-frame brightness variation caused by clouds,
@@ -42,17 +42,14 @@ func DefaultConfig() Config {
 // Generate creates a timelapse video from all images in the given directory.
 // The output file is written to <dir>/timelapse-<date>.mp4.
 func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Logger) (string, error) {
-	// Verify ffmpeg is available.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return "", fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
 
-	// Collect image files, sorted by name (which includes timestamp).
 	images, err := collectImages(imageDir)
 	if err != nil {
 		return "", fmt.Errorf("collect images: %w", err)
 	}
-
 	if len(images) == 0 {
 		return "", fmt.Errorf("no images found in %s", imageDir)
 	}
@@ -64,19 +61,176 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 		"codec", cfg.Codec,
 	)
 
-	// Create a temporary file list for ffmpeg's concat demuxer.
-	// This avoids issues with glob patterns and mixed image formats.
-	listPath := filepath.Join(imageDir, "timelapse_input.txt")
-	if err := writeFileList(listPath, images); err != nil {
-		return "", fmt.Errorf("write file list: %w", err)
-	}
-	defer os.Remove(listPath)
-
 	date := filepath.Base(imageDir)
 	outputPath := filepath.Join(imageDir, "timelapse-"+date+".mp4")
 	tmpOutput := filepath.Join(imageDir, "timelapse-"+date+".tmp.mp4")
 
-	// Build ffmpeg command.
+	startTime := time.Now()
+	if err := encodeImages(ctx, imageDir, images, tmpOutput, cfg); err != nil {
+		return "", err
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return "", fmt.Errorf("rename output: %w", err)
+	}
+
+	logCompletion(outputPath, len(images), cfg.FPS, time.Since(startTime), logger)
+	return outputPath, nil
+}
+
+// GenerateSegment encodes a single segment for iterative timelapse. It reads
+// all images from dir, takes the window at segIdx*segmentFrames, and writes
+// timelapse-segment-NNNN.mp4 to dir. Safe to call concurrently for different
+// segment indices.
+func GenerateSegment(ctx context.Context, dir string, segIdx int, segmentFrames int, cfg Config, logger *slog.Logger) (string, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg not found in PATH: %w", err)
+	}
+
+	images, err := collectImages(dir)
+	if err != nil {
+		return "", fmt.Errorf("collect images: %w", err)
+	}
+
+	start := segIdx * segmentFrames
+	if start >= len(images) {
+		return "", fmt.Errorf("segment %d out of range (%d images available)", segIdx, len(images))
+	}
+	end := start + segmentFrames
+	if end > len(images) {
+		end = len(images)
+	}
+	images = images[start:end]
+
+	outputPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.mp4", segIdx))
+	tmpOutput := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.tmp.mp4", segIdx))
+
+	logger.Info("generating timelapse segment", "dir", dir, "segment", segIdx, "frames", len(images))
+
+	if err := encodeImages(ctx, dir, images, tmpOutput, cfg); err != nil {
+		return "", err
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return "", fmt.Errorf("rename segment: %w", err)
+	}
+
+	return outputPath, nil
+}
+
+// FinalizeSegments completes an iterative timelapse: encodes any remaining
+// frames not yet in a segment, then concatenates all segments with stream copy
+// (no re-encode). Segment files are removed on success.
+func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrames int, cfg Config, logger *slog.Logger) (string, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg not found in PATH: %w", err)
+	}
+
+	images, err := collectImages(dir)
+	if err != nil {
+		return "", fmt.Errorf("collect images: %w", err)
+	}
+	if len(images) == 0 {
+		return "", fmt.Errorf("no images found in %s", dir)
+	}
+
+	segments, err := collectSegments(dir)
+	if err != nil {
+		return "", fmt.Errorf("collect segments: %w", err)
+	}
+
+	// Encode remaining frames not yet covered by a full segment.
+	encoded := len(segments) * segmentFrames
+	if encoded < len(images) {
+		remaining := images[encoded:]
+		segIdx := len(segments)
+		segPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.mp4", segIdx))
+		tmpPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.tmp.mp4", segIdx))
+		logger.Info("encoding final partial segment", "frames", len(remaining), "segment", segIdx)
+		if err := encodeImages(ctx, dir, remaining, tmpPath, cfg); err != nil {
+			return "", fmt.Errorf("encode final segment: %w", err)
+		}
+		if err := os.Rename(tmpPath, segPath); err != nil {
+			return "", fmt.Errorf("rename final segment: %w", err)
+		}
+		segments = append(segments, segPath)
+	}
+
+	outputPath := filepath.Join(dir, "timelapse-"+date+".mp4")
+
+	if len(segments) == 1 {
+		if err := os.Rename(segments[0], outputPath); err != nil {
+			return "", fmt.Errorf("rename single segment: %w", err)
+		}
+		logger.Info("timelapse complete (single segment)", "output", outputPath)
+		return outputPath, nil
+	}
+
+	// Write segment list for concat demuxer.
+	listPath := filepath.Join(dir, "timelapse_segments.txt")
+	var buf strings.Builder
+	for _, seg := range segments {
+		fmt.Fprintf(&buf, "file '%s'\n", filepath.Base(seg))
+	}
+	if err := os.WriteFile(listPath, []byte(buf.String()), 0644); err != nil {
+		return "", fmt.Errorf("write segment list: %w", err)
+	}
+	defer os.Remove(listPath)
+
+	tmpOutput := filepath.Join(dir, "timelapse-"+date+".tmp.mp4")
+	args := []string{
+		"-y",
+		"-f", "concat",
+		"-safe", "0",
+		"-i", listPath,
+		"-c", "copy",
+		tmpOutput,
+	}
+
+	logger.Info("concatenating timelapse segments", "segments", len(segments))
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg concat failed: %w\nstderr: %s", err, stderr.String())
+	}
+
+	if err := os.Rename(tmpOutput, outputPath); err != nil {
+		return "", fmt.Errorf("rename output: %w", err)
+	}
+
+	for _, seg := range segments {
+		os.Remove(seg)
+	}
+
+	stat, _ := os.Stat(outputPath)
+	sizeMB := float64(0)
+	if stat != nil {
+		sizeMB = float64(stat.Size()) / (1024 * 1024)
+	}
+	logger.Info("timelapse complete",
+		"output", outputPath,
+		"segments", len(segments),
+		"size_mb", fmt.Sprintf("%.1f", sizeMB),
+	)
+
+	return outputPath, nil
+}
+
+// encodeImages runs ffmpeg to encode images into a video file at outputPath.
+func encodeImages(ctx context.Context, dir string, images []string, outputPath string, cfg Config) error {
+	listFile, err := os.CreateTemp(dir, "timelapse-*.txt")
+	if err != nil {
+		return fmt.Errorf("create temp list: %w", err)
+	}
+	listPath := listFile.Name()
+	listFile.Close()
+	defer os.Remove(listPath)
+
+	if err := writeFileList(listPath, images); err != nil {
+		return fmt.Errorf("write file list: %w", err)
+	}
+
 	args := []string{
 		"-y",
 		"-r", fmt.Sprintf("%d", cfg.FPS),
@@ -97,13 +251,17 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 	)
 
 	// Quality: CRF takes precedence over fixed bitrate.
+	// AV1 encoders (libaom-av1, libsvtav1) require -b:v 0 alongside -crf to
+	// enable true constant-quality mode rather than constrained-quality mode.
 	if cfg.CRF > 0 {
 		args = append(args, "-crf", fmt.Sprintf("%d", cfg.CRF))
+		if strings.Contains(cfg.Codec, "av1") {
+			args = append(args, "-b:v", "0")
+		}
 	} else {
 		args = append(args, "-b:v", cfg.Bitrate)
 	}
 
-	// Deflicker filter smooths per-frame brightness variation.
 	if cfg.Deflicker {
 		args = append(args, "-vf", "deflicker=size=5:mode=am")
 	}
@@ -111,37 +269,31 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 	args = append(args,
 		"-pix_fmt", "yuv420p",
 		"-movflags", "+faststart",
-		tmpOutput,
+		outputPath,
 	)
 
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-
-	startTime := time.Now()
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg failed: %w\nstderr: %s", err, stderr.String())
+		return fmt.Errorf("ffmpeg failed: %w\nstderr: %s", err, stderr.String())
 	}
+	return nil
+}
 
-	if err := os.Rename(tmpOutput, outputPath); err != nil {
-		return "", fmt.Errorf("rename output: %w", err)
-	}
-
+func logCompletion(outputPath string, frames int, fps int, elapsed time.Duration, logger *slog.Logger) {
 	stat, _ := os.Stat(outputPath)
 	sizeMB := float64(0)
 	if stat != nil {
 		sizeMB = float64(stat.Size()) / (1024 * 1024)
 	}
-
 	logger.Info("timelapse complete",
 		"output", outputPath,
 		"size_mb", fmt.Sprintf("%.1f", sizeMB),
-		"duration_s", time.Since(startTime).Seconds(),
-		"frames", len(images),
-		"video_duration_s", fmt.Sprintf("%.1f", float64(len(images))/float64(cfg.FPS)),
+		"duration_s", elapsed.Seconds(),
+		"frames", frames,
+		"video_duration_s", fmt.Sprintf("%.1f", float64(frames)/float64(fps)),
 	)
-
-	return outputPath, nil
 }
 
 // collectImages returns sorted captured-image file paths from a directory.
@@ -177,6 +329,22 @@ func collectImages(dir string) ([]string, error) {
 
 	sort.Strings(images)
 	return images, nil
+}
+
+// collectSegments returns sorted timelapse-segment-*.mp4 paths from dir.
+func collectSegments(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var segs []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(strings.ToLower(e.Name()), "timelapse-segment-") {
+			segs = append(segs, filepath.Join(dir, e.Name()))
+		}
+	}
+	sort.Strings(segs)
+	return segs, nil
 }
 
 // allWebP returns true when every image in the list is a WebP file. Used to

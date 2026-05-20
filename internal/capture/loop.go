@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dburman/nightsky/internal/astro"
@@ -18,6 +19,7 @@ import (
 	"github.com/dburman/nightsky/internal/flat"
 	imgutil "github.com/dburman/nightsky/internal/image"
 	"github.com/dburman/nightsky/internal/metrics"
+	"github.com/dburman/nightsky/internal/timelapse"
 )
 
 // Mode represents the current capture mode.
@@ -53,6 +55,10 @@ type Loop struct {
 	frameCount      int64
 	skipRemaining   int
 	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
+
+	// Iterative timelapse state (used when SegmentFrames > 0).
+	nightFrameCount int
+	segmentWg       sync.WaitGroup
 
 	// Callbacks for upload integration.
 	OnImageSaved func(path string, meta camera.CaptureMeta)
@@ -127,6 +133,8 @@ func (l *Loop) Run(ctx context.Context) error {
 						}
 						l.cloudMetrics = nil
 					}
+					// Drain any in-flight segment encodes before finalizing.
+					l.segmentWg.Wait()
 					if l.OnNightEnd != nil {
 						l.OnNightEnd(nightDir)
 					}
@@ -271,6 +279,31 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.OnImageSaved(outputPath, result.Meta)
 		}
 
+		// Iterative timelapse: encode a segment every SegmentFrames night frames.
+		if l.mode == ModeNight && l.cfg.Output.Timelapse.Enabled {
+			if sf := l.cfg.Output.Timelapse.SegmentFrames; sf > 0 {
+				l.nightFrameCount++
+				if l.nightFrameCount%sf == 0 {
+					segIdx := (l.nightFrameCount / sf) - 1
+					dir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
+					tlCfg := timelapse.Config{
+						FPS:       l.cfg.Output.Timelapse.FPS,
+						Bitrate:   l.cfg.Output.Timelapse.Bitrate,
+						Codec:     l.cfg.Output.Timelapse.Codec,
+						CRF:       l.cfg.Output.Timelapse.CRF,
+						Deflicker: l.cfg.Output.Timelapse.Deflicker,
+					}
+					l.segmentWg.Add(1)
+					go func(idx int) {
+						defer l.segmentWg.Done()
+						if _, err := timelapse.GenerateSegment(ctx, dir, idx, sf, tlCfg, l.logger); err != nil {
+							l.logger.Error("timelapse segment failed", "segment", idx, "error", err)
+						}
+					}(segIdx)
+				}
+			}
+		}
+
 		// Auto-exposure adjustment using the metered zone mean.
 		if modeCfg.AutoExposure {
 			l.exposureCtrl.Adjust(meteredMean)
@@ -325,8 +358,11 @@ func (l *Loop) modeConfig() config.ModeConfig {
 
 // initMode initializes state for a new mode.
 func (l *Loop) initMode() {
-	if l.mode == ModeNight && l.nightSessionDir == "" {
-		l.nightSessionDir = time.Now().Format("2006-01-02")
+	if l.mode == ModeNight {
+		if l.nightSessionDir == "" {
+			l.nightSessionDir = time.Now().Format("2006-01-02")
+		}
+		l.nightFrameCount = 0
 	}
 
 	modeCfg := l.modeConfig()

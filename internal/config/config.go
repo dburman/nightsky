@@ -175,13 +175,17 @@ type TimelapseConfig struct {
 	FPS int `mapstructure:"fps"        json:"fps"`
 	// Bitrate for the video (default "2000k"). Ignored when CRF > 0.
 	Bitrate string `mapstructure:"bitrate"    json:"bitrate"`
-	// Codec: "libx264" (default), "libx265".
+	// Codec: "libx264" (default), "libx265", "libaom-av1", "libsvtav1".
 	Codec string `mapstructure:"codec"      json:"codec"`
 	// CRF sets the constant-rate-factor quality (0 = use Bitrate).
 	// Typical: 18–23 for libx264, 24–28 for libx265. Lower = better quality.
 	CRF int `mapstructure:"crf"        json:"crf"`
 	// Deflicker smooths per-frame brightness variation in the output video.
 	Deflicker bool `mapstructure:"deflicker"  json:"deflicker"`
+	// SegmentFrames, when > 0, enables iterative mode: a video segment is
+	// encoded after every N captured frames. At end of night the segments are
+	// concatenated with stream copy (no re-encode). 0 = encode at end of night.
+	SegmentFrames int `mapstructure:"segment_frames" json:"segment_frames"`
 }
 
 // UploadConfig controls how images/videos are uploaded.
@@ -337,6 +341,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.codec", "libx264")
 	v.SetDefault("output.timelapse.crf", 0)
 	v.SetDefault("output.timelapse.deflicker", false)
+	v.SetDefault("output.timelapse.segment_frames", 0)
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)
