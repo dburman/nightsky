@@ -45,6 +45,9 @@ day:
   denoise: cdn_fast
   # Metering zone for auto-exposure: "full", "center", or "top"
   metering_zone: full
+  # Save a DNG file alongside each capture (libcamera / RPi only).
+  # DNG preserves full sensor bit depth and Bayer pattern for post-processing.
+  save_raw: false
 
 # Night mode settings (sun below angle threshold)
 # Tuned for the Sony IMX462 (Starvis) — a highly sensitive sensor that needs
@@ -70,6 +73,10 @@ night:
   # "center" is recommended for upward-pointing all-sky cameras — it meters
   # the sky and ignores the lit ground/horizon at the frame edges.
   metering_zone: center
+  # Save a DNG file alongside each capture (libcamera / RPi only).
+  # DNG preserves full sensor bit depth and Bayer pattern for post-processing
+  # in Lightroom, darktable, RawTherapee, etc. DNGs are kept during raw prune.
+  save_raw: false
   # ZWO cooler settings (ignored for RPi cameras)
   cooler_enabled: false
   cooler_target: -10

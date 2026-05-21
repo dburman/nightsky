@@ -41,6 +41,9 @@ type CaptureResult struct {
 	Image image.Image
 	// RawData holds the raw bytes when the camera outputs encoded formats (JPEG/PNG).
 	RawData []byte
+	// DNGData holds the raw DNG file bytes when SaveRaw was set in CaptureSettings.
+	// Nil if raw capture was not requested or is not supported by the backend.
+	DNGData []byte
 	// Metadata about the capture.
 	Meta CaptureMeta
 }
@@ -94,6 +97,8 @@ type CaptureSettings struct {
 	Format      ImageFormat
 	// For libcamera: denoise mode.
 	Denoise string
+	// SaveRaw requests a DNG file alongside the main capture (libcamera only).
+	SaveRaw bool
 }
 
 // CoolerSettings controls the camera's TEC cooler.

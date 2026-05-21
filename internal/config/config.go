@@ -88,6 +88,10 @@ type ModeConfig struct {
 	// radius circle (zenith for upward-pointing all-sky cameras); "top" = top
 	// third of frame.
 	MeteringZone string `mapstructure:"metering_zone"     json:"metering_zone"`
+	// SaveRaw saves a DNG file alongside each captured image (libcamera only).
+	// DNG preserves the full sensor bit depth and Bayer pattern for
+	// post-processing in tools like Lightroom, darktable, or RawTherapee.
+	SaveRaw bool `mapstructure:"save_raw"          json:"save_raw"`
 }
 
 // OutputConfig controls where and how images are saved.
@@ -321,6 +325,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("night.denoise", "off")
 	v.SetDefault("night.metering_zone", "center")
 	v.SetDefault("day.metering_zone", "full")
+	v.SetDefault("night.save_raw", false)
+	v.SetDefault("day.save_raw", false)
 
 	v.SetDefault("output.directory", "./output")
 	v.SetDefault("output.filename_prefix", "allsky")

@@ -85,6 +85,17 @@ func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.Ca
 			return fmt.Errorf("capture dark frame %d: %w", i+1, err)
 		}
 		frames = append(frames, result.Image)
+
+		if len(result.DNGData) > 0 {
+			dngName := fmt.Sprintf("dark_%dms_gain%.0f_bin%d_%04d.dng",
+				key.Exposure.Milliseconds(), key.Gain, key.Binning, i+1)
+			dngPath := filepath.Join(dm.Dir, dngName)
+			if err := os.WriteFile(dngPath, result.DNGData, 0644); err != nil {
+				dm.logger.Warn("failed to save dark DNG", "path", dngPath, "error", err)
+			} else {
+				dm.logger.Info("dark DNG saved", "path", dngPath)
+			}
+		}
 	}
 
 	// Average all dark frames.

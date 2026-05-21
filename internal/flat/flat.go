@@ -161,6 +161,15 @@ func (m *Manager) CaptureFlat(ctx context.Context, settings camera.CaptureSettin
 			return fmt.Errorf("capture flat frame %d: %w", i+1, err)
 		}
 		frames = append(frames, res.Image)
+
+		if len(res.DNGData) > 0 {
+			dngPath := filepath.Join(m.Dir, fmt.Sprintf("flat_%04d.dng", i+1))
+			if err := os.WriteFile(dngPath, res.DNGData, 0644); err != nil {
+				m.logger.Warn("failed to save flat DNG", "path", dngPath, "error", err)
+			} else {
+				m.logger.Info("flat DNG saved", "path", dngPath)
+			}
+		}
 	}
 
 	averaged := averageFrames(frames)

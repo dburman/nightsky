@@ -160,6 +160,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			Flip:     l.cfg.Camera.Flip,
 			Format:   camera.FormatRGB24,
 			Denoise:  modeCfg.Denoise,
+			SaveRaw:  modeCfg.SaveRaw,
 		}
 
 		// Apply cooler settings if applicable.
@@ -265,6 +266,17 @@ func (l *Loop) Run(ctx context.Context) error {
 			"size_kb", len(data)/1024,
 			"frame", l.frameCount,
 		)
+
+		// Save DNG alongside the main image when raw capture is enabled.
+		if len(result.DNGData) > 0 {
+			stem := outputPath[:len(outputPath)-len(filepath.Ext(outputPath))]
+			dngPath := stem + ".dng"
+			if err := os.WriteFile(dngPath, result.DNGData, 0644); err != nil {
+				l.logger.Error("save DNG", "error", err)
+			} else {
+				l.logger.Debug("saved DNG", "path", dngPath, "size_kb", len(result.DNGData)/1024)
+			}
+		}
 
 		// Generate thumbnail from the already-decoded image so the web UI
 		// serves pre-built thumbnails without re-decoding from disk.
@@ -467,12 +479,13 @@ func pruneRawInDir(dir string) (int, error) {
 	for _, e := range entries {
 		lower := strings.ToLower(e.Name())
 
-		// Keep synthesized outputs regardless of extension.
+		// Keep synthesized outputs and DNG raw files.
 		if strings.HasPrefix(lower, "timelapse-") ||
 			strings.HasPrefix(lower, "keogram-") ||
 			strings.HasPrefix(lower, "startrails-") ||
 			strings.HasPrefix(lower, "wb-analysis-") ||
-			strings.HasPrefix(lower, "cloud-") {
+			strings.HasPrefix(lower, "cloud-") ||
+			strings.HasSuffix(lower, ".dng") {
 			continue
 		}
 

@@ -125,6 +125,17 @@ func (c *Camera) Capture(ctx context.Context, settings camera.CaptureSettings) (
 		return nil, fmt.Errorf("read captured image: %w", err)
 	}
 
+	// Read DNG if raw capture was requested. rpicam-still writes it alongside
+	// the main output with the same stem and a .dng extension.
+	var dngData []byte
+	if settings.SaveRaw {
+		dngPath := outputPath[:len(outputPath)-len(filepath.Ext(outputPath))] + ".dng"
+		dngData, err = os.ReadFile(dngPath)
+		if err != nil {
+			c.logger.Warn("DNG not found after raw capture", "path", dngPath, "error", err)
+		}
+	}
+
 	// Decode the image.
 	var img image.Image
 	reader := bytes.NewReader(imgData)
@@ -147,6 +158,7 @@ func (c *Camera) Capture(ctx context.Context, settings camera.CaptureSettings) (
 	result := &camera.CaptureResult{
 		Image:   img,
 		RawData: imgData,
+		DNGData: dngData,
 		Meta: camera.CaptureMeta{
 			Timestamp:      startTime,
 			Exposure:       captureTime,
@@ -234,6 +246,11 @@ func (c *Camera) buildArgs(s camera.CaptureSettings, outputPath, metadataPath, e
 	// JPEG quality.
 	if encoding == "jpg" {
 		args = append(args, "--quality", "95")
+	}
+
+	// Raw DNG alongside the main output.
+	if s.SaveRaw {
+		args = append(args, "--raw")
 	}
 
 	return args

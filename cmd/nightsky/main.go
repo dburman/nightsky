@@ -323,6 +323,7 @@ func darkCmd() *cobra.Command {
 					Gain:     mode.cfg.Gain,
 					Binning:  mode.cfg.Binning,
 					Format:   camera.FormatRGB24,
+					SaveRaw:  mode.cfg.SaveRaw,
 				}
 
 				if err := darkMgr.CaptureDarks(context.Background(), settings); err != nil {
@@ -369,6 +370,7 @@ func flatCmd() *cobra.Command {
 				Gain:     cfg.Night.Gain,
 				Binning:  cfg.Night.Binning,
 				Format:   camera.FormatRGB24,
+				SaveRaw:  cfg.Night.SaveRaw,
 			}
 
 			fmt.Printf("Capturing %d flat frames (exposure=%v, gain=%.1f)...\n",
