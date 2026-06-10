@@ -104,6 +104,15 @@ func captureCmd() *cobra.Command {
 				return fmt.Errorf("config: %w", err)
 			}
 
+			// Deflicker smooths brightness within a single encode, but segment
+			// mode concatenates independently-encoded segments with stream
+			// copy, so brightness steps at segment boundaries are never
+			// smoothed.
+			if cfg.Output.Timelapse.Deflicker && cfg.Output.Timelapse.SegmentFrames > 0 {
+				logger.Warn("timelapse.deflicker has no effect across segment boundaries with segment_frames > 0; " +
+					"set segment_frames: 0 for full-night deflicker")
+			}
+
 			// GPS auto-location: fetch a fix from gpsd and override config lat/lon.
 			if cfg.Location.GPS {
 				gpsCtx, gpsCancel := context.WithTimeout(context.Background(), 30*time.Second)
