@@ -54,6 +54,7 @@ type Loop struct {
 	flatMgr         *flat.Manager
 	frameCount      int64
 	skipRemaining   int
+	failureStreak   int // consecutive capture failures, for backoff and reinit
 	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
 
 	// Iterative timelapse state (used when SegmentFrames > 0).
@@ -178,10 +179,35 @@ func (l *Loop) Run(ctx context.Context) error {
 		cancel()
 
 		if err != nil {
-			l.logger.Error("capture failed", "error", err)
-			time.Sleep(time.Second)
+			l.failureStreak++
+			backoff := failureBackoff(l.failureStreak)
+			l.logger.Error("capture failed",
+				"error", err,
+				"consecutive_failures", l.failureStreak,
+				"retry_in", backoff,
+			)
+
+			// A persistent failure streak usually means a wedged device
+			// (USB stall, crashed pipeline) that retrying alone won't fix —
+			// cycle the camera connection.
+			if l.failureStreak%5 == 0 {
+				l.logger.Warn("reinitializing camera after repeated capture failures")
+				if cerr := l.cam.Close(); cerr != nil {
+					l.logger.Error("camera close failed", "error", cerr)
+				}
+				if oerr := l.cam.Open(); oerr != nil {
+					l.logger.Error("camera reopen failed", "error", oerr)
+				}
+			}
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
 			continue
 		}
+		l.failureStreak = 0
 
 		l.frameCount++
 
@@ -418,6 +444,19 @@ func (l *Loop) initMode() {
 			l.logger.Info("loaded dark frame for mode", "mode", l.mode)
 		}
 	}
+}
+
+// failureBackoff returns the retry delay after n consecutive capture
+// failures: 1s, 2s, 4s, ... capped at 60s.
+func failureBackoff(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	d := time.Second << uint(min(n-1, 6))
+	if d > 60*time.Second {
+		d = 60 * time.Second
+	}
+	return d
 }
 
 // writeFileAtomic writes data to path via a temp file and rename, so the

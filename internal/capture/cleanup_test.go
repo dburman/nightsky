@@ -162,6 +162,25 @@ func TestCleanForSpace_NoopWhenSpaceSufficient(t *testing.T) {
 	}
 }
 
+func TestFailureBackoff(t *testing.T) {
+	cases := []struct {
+		n    int
+		want time.Duration
+	}{
+		{1, time.Second},
+		{2, 2 * time.Second},
+		{3, 4 * time.Second},
+		{7, 60 * time.Second},
+		{100, 60 * time.Second},
+		{0, time.Second}, // defensive
+	}
+	for _, c := range cases {
+		if got := failureBackoff(c.n); got != c.want {
+			t.Errorf("failureBackoff(%d) = %v, want %v", c.n, got, c.want)
+		}
+	}
+}
+
 func TestCleanForSpace_ErrorOnMissingDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	if err := CleanForSpace(missing, 1<<30, "", testLogger()); err == nil {
