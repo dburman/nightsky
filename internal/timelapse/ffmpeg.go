@@ -249,6 +249,9 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 		return fmt.Errorf("write file list: %w", err)
 	}
 
+	// -r (not -framerate) is required here: -framerate is an image2-demuxer
+	// option and the concat demuxer rejects it ("Option framerate not found").
+	// As an input option before -i, -r forces the input frame rate.
 	args := []string{
 		"-y",
 		"-r", fmt.Sprintf("%d", cfg.FPS),
