@@ -256,7 +256,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 
-		if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		if err := writeFileAtomic(outputPath, data); err != nil {
 			l.logger.Error("save image", "error", err)
 			continue
 		}
@@ -271,7 +271,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		if len(result.DNGData) > 0 {
 			stem := outputPath[:len(outputPath)-len(filepath.Ext(outputPath))]
 			dngPath := stem + ".dng"
-			if err := os.WriteFile(dngPath, result.DNGData, 0644); err != nil {
+			if err := writeFileAtomic(dngPath, result.DNGData); err != nil {
 				l.logger.Error("save DNG", "error", err)
 			} else {
 				l.logger.Debug("saved DNG", "path", dngPath, "size_kb", len(result.DNGData)/1024)
@@ -418,6 +418,21 @@ func (l *Loop) initMode() {
 			l.logger.Info("loaded dark frame for mode", "mode", l.mode)
 		}
 	}
+}
+
+// writeFileAtomic writes data to path via a temp file and rename, so the
+// concurrent readers of the output directory (segment encoder, uploader, web
+// server) never observe a partially written frame.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // PruneRawImages removes raw captured image files from night directories older
