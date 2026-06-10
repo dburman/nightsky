@@ -429,8 +429,10 @@ func PruneRawImages(outputDir string, afterDays int, logger *slog.Logger) error 
 		return nil
 	}
 
-	today := time.Now().Format("2006-01-02")
-	cutoff := time.Now().AddDate(0, 0, -afterDays)
+	// Compare directory names lexically against a date-string cutoff. Parsing
+	// names with time.Parse yields UTC midnight, and comparing that against a
+	// local-time cutoff made afterDays=1 prune the night that had just ended.
+	cutoff := time.Now().AddDate(0, 0, -afterDays).Format("2006-01-02")
 
 	entries, err := os.ReadDir(outputDir)
 	if err != nil {
@@ -438,14 +440,13 @@ func PruneRawImages(outputDir string, afterDays int, logger *slog.Logger) error 
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || entry.Name() == today {
+		if !entry.IsDir() {
 			continue
 		}
-		dirDate, err := time.Parse("2006-01-02", entry.Name())
-		if err != nil {
+		if _, err := time.Parse("2006-01-02", entry.Name()); err != nil {
 			continue
 		}
-		if !dirDate.Before(cutoff) {
+		if entry.Name() >= cutoff {
 			continue
 		}
 
@@ -505,13 +506,17 @@ func pruneRawInDir(dir string) (int, error) {
 	return removed, nil
 }
 
-// CleanOldData removes output directories older than DaysToKeep.
+// CleanOldData removes output directories older than DaysToKeep. The last
+// daysToKeep date directories (counting today) are kept, so daysToKeep=1
+// preserves the night that just ended.
 func CleanOldData(outputDir string, daysToKeep int, logger *slog.Logger) error {
 	if daysToKeep <= 0 {
 		return nil
 	}
 
-	cutoff := time.Now().AddDate(0, 0, -daysToKeep)
+	// Lexical date-string comparison — see PruneRawImages for why time.Parse
+	// comparisons are wrong here.
+	cutoff := time.Now().AddDate(0, 0, -daysToKeep).Format("2006-01-02")
 
 	entries, err := os.ReadDir(outputDir)
 	if err != nil {
@@ -522,19 +527,17 @@ func CleanOldData(outputDir string, daysToKeep int, logger *slog.Logger) error {
 		if !entry.IsDir() {
 			continue
 		}
-
-		// Parse directory name as date.
-		dirDate, err := time.Parse("2006-01-02", entry.Name())
-		if err != nil {
+		if _, err := time.Parse("2006-01-02", entry.Name()); err != nil {
 			continue // not a date directory
 		}
+		if entry.Name() >= cutoff {
+			continue
+		}
 
-		if dirDate.Before(cutoff) {
-			dirPath := filepath.Join(outputDir, entry.Name())
-			logger.Info("removing old data", "dir", dirPath, "age_days", int(time.Since(dirDate).Hours()/24))
-			if err := os.RemoveAll(dirPath); err != nil {
-				logger.Error("failed to remove old data", "dir", dirPath, "error", err)
-			}
+		dirPath := filepath.Join(outputDir, entry.Name())
+		logger.Info("removing old data", "dir", dirPath, "date", entry.Name())
+		if err := os.RemoveAll(dirPath); err != nil {
+			logger.Error("failed to remove old data", "dir", dirPath, "error", err)
 		}
 	}
 

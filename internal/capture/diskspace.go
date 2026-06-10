@@ -22,9 +22,12 @@ func DiskFreeGB(path string) (float64, error) {
 
 // CleanForSpace removes the oldest date directories under outputDir, one at a
 // time, until free disk space exceeds minFreeGB. It never removes today's
-// directory. If space cannot be freed (only today remains), it logs a warning
-// and returns without error.
-func CleanForSpace(outputDir string, minFreeGB float64, logger *slog.Logger) error {
+// directory or protectDir (the just-finished night session, which is dated by
+// the night's start and therefore not "today" when end-of-night cleanup runs).
+// If no removable directory remains, it logs a warning and returns without
+// error. protectDir is a directory basename ("2006-01-02"); pass "" to only
+// protect today.
+func CleanForSpace(outputDir string, minFreeGB float64, protectDir string, logger *slog.Logger) error {
 	today := time.Now().Format("2006-01-02")
 
 	for {
@@ -36,15 +39,23 @@ func CleanForSpace(outputDir string, minFreeGB float64, logger *slog.Logger) err
 			return nil
 		}
 
-		// ListDateDirs returns newest-first; oldest is last.
 		dirs, err := ListDateDirs(outputDir)
-		if err != nil || len(dirs) == 0 {
-			return nil
+		if err != nil {
+			return err
 		}
 
-		oldest := dirs[len(dirs)-1]
-		if filepath.Base(oldest) == today {
-			logger.Warn("disk space low but only today's captures remain — nothing removed",
+		// ListDateDirs returns newest-first; pick the oldest removable dir.
+		victim := ""
+		for i := len(dirs) - 1; i >= 0; i-- {
+			base := filepath.Base(dirs[i])
+			if base == today || base == protectDir {
+				continue
+			}
+			victim = dirs[i]
+			break
+		}
+		if victim == "" {
+			logger.Warn("disk space low but only protected captures remain — nothing removed",
 				"free_gb", free,
 				"min_free_gb", minFreeGB,
 			)
@@ -52,11 +63,11 @@ func CleanForSpace(outputDir string, minFreeGB float64, logger *slog.Logger) err
 		}
 
 		logger.Info("disk space below threshold, removing oldest captures",
-			"dir", oldest,
+			"dir", victim,
 			"free_gb", free,
 			"min_free_gb", minFreeGB,
 		)
-		if err := os.RemoveAll(oldest); err != nil {
+		if err := os.RemoveAll(victim); err != nil {
 			return err
 		}
 	}
