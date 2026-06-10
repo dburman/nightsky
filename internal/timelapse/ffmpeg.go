@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -141,22 +142,36 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 		return "", fmt.Errorf("collect segments: %w", err)
 	}
 
-	// Encode remaining frames not yet covered by a full segment.
-	encoded := len(segments) * segmentFrames
-	if encoded < len(images) {
-		remaining := images[encoded:]
-		segIdx := len(segments)
-		segPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.mp4", segIdx))
-		tmpPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.tmp.mp4", segIdx))
-		logger.Info("encoding final partial segment", "frames", len(remaining), "segment", segIdx)
-		if err := encodeImages(ctx, dir, remaining, tmpPath, cfg); err != nil {
-			return "", fmt.Errorf("encode final segment: %w", err)
+	// Encode every frame window not covered by an existing segment. Coverage
+	// is derived from the segment indices in the filenames, not the segment
+	// count — a segment that failed mid-night leaves a gap, and counting
+	// would silently drop its frames and misalign the remainder.
+	present := make(map[int]bool, len(segments))
+	for _, seg := range segments {
+		if idx, ok := segmentIndex(seg); ok {
+			present[idx] = true
+		}
+	}
+
+	total := (len(images) + segmentFrames - 1) / segmentFrames
+	for idx := 0; idx < total; idx++ {
+		if present[idx] {
+			continue
+		}
+		start := idx * segmentFrames
+		end := min(start+segmentFrames, len(images))
+		segPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.mp4", idx))
+		tmpPath := filepath.Join(dir, fmt.Sprintf("timelapse-segment-%04d.tmp.mp4", idx))
+		logger.Info("encoding missing segment", "segment", idx, "frames", end-start)
+		if err := encodeImages(ctx, dir, images[start:end], tmpPath, cfg); err != nil {
+			return "", fmt.Errorf("encode segment %d: %w", idx, err)
 		}
 		if err := os.Rename(tmpPath, segPath); err != nil {
-			return "", fmt.Errorf("rename final segment: %w", err)
+			return "", fmt.Errorf("rename segment %d: %w", idx, err)
 		}
 		segments = append(segments, segPath)
 	}
+	sort.Strings(segments)
 
 	outputPath := filepath.Join(dir, "timelapse-"+date+".mp4")
 
@@ -333,6 +348,19 @@ func collectImages(dir string) ([]string, error) {
 
 	sort.Strings(images)
 	return images, nil
+}
+
+// segmentIndex parses the numeric index from a timelapse-segment-NNNN.mp4
+// path. Returns false for names that don't match the segment pattern.
+func segmentIndex(path string) (int, bool) {
+	name := strings.ToLower(filepath.Base(path))
+	name = strings.TrimPrefix(name, "timelapse-segment-")
+	name = strings.TrimSuffix(name, ".mp4")
+	idx, err := strconv.Atoi(name)
+	if err != nil || idx < 0 {
+		return 0, false
+	}
+	return idx, true
 }
 
 // collectSegments returns sorted timelapse-segment-*.mp4 paths from dir.

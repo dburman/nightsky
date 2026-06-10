@@ -46,6 +46,25 @@ func TestCollectSegments_ExcludesTmpFiles(t *testing.T) {
 	}
 }
 
+func TestSegmentIndex(t *testing.T) {
+	cases := []struct {
+		path string
+		idx  int
+		ok   bool
+	}{
+		{"/x/timelapse-segment-0000.mp4", 0, true},
+		{"/x/timelapse-segment-0042.mp4", 42, true},
+		{"/x/timelapse-2026-06-09.mp4", 0, false},
+		{"/x/timelapse-segment-abcd.mp4", 0, false},
+	}
+	for _, c := range cases {
+		idx, ok := segmentIndex(c.path)
+		if idx != c.idx || ok != c.ok {
+			t.Errorf("segmentIndex(%q) = (%d, %v), want (%d, %v)", c.path, idx, ok, c.idx, c.ok)
+		}
+	}
+}
+
 func TestRemoveStaleTmp(t *testing.T) {
 	dir := t.TempDir()
 	touch(t, dir, "timelapse-segment-0002.tmp.mp4")
