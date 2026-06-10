@@ -187,7 +187,7 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	listPath := filepath.Join(dir, "timelapse_segments.txt")
 	var buf strings.Builder
 	for _, seg := range segments {
-		fmt.Fprintf(&buf, "file '%s'\n", filepath.Base(seg))
+		buf.WriteString(concatListEntry(filepath.Base(seg)))
 	}
 	if err := os.WriteFile(listPath, []byte(buf.String()), 0644); err != nil {
 		return "", fmt.Errorf("write segment list: %w", err)
@@ -415,13 +415,20 @@ func allWebP(images []string) bool {
 	return len(images) > 0
 }
 
+// concatListEntry formats one ffmpeg concat-demuxer list line, escaping
+// single quotes in the filename ('  →  '\'') so a quote in the configured
+// filename prefix can't break the list syntax.
+func concatListEntry(name string) string {
+	return "file '" + strings.ReplaceAll(name, "'", `'\''`) + "'\n"
+}
+
 // writeFileList writes an ffmpeg concat demuxer file list.
 // Paths are written as basenames since the list file lives in the same directory
 // as the images, and ffmpeg resolves paths relative to the list file location.
 func writeFileList(path string, images []string) error {
 	var buf strings.Builder
 	for _, img := range images {
-		fmt.Fprintf(&buf, "file '%s'\n", filepath.Base(img))
+		buf.WriteString(concatListEntry(filepath.Base(img)))
 	}
 	return os.WriteFile(path, []byte(buf.String()), 0644)
 }

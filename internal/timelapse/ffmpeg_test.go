@@ -46,6 +46,17 @@ func TestCollectSegments_ExcludesTmpFiles(t *testing.T) {
 	}
 }
 
+func TestConcatListEntry_EscapesQuotes(t *testing.T) {
+	got := concatListEntry("it's-allsky-1.jpg")
+	want := `file 'it'\''s-allsky-1.jpg'` + "\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if plain := concatListEntry("allsky-1.jpg"); plain != "file 'allsky-1.jpg'\n" {
+		t.Errorf("got %q for plain name", plain)
+	}
+}
+
 func TestSegmentIndex(t *testing.T) {
 	cases := []struct {
 		path string
