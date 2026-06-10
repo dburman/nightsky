@@ -134,6 +134,8 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 		return "", fmt.Errorf("no images found in %s", dir)
 	}
 
+	removeStaleTmp(dir, logger)
+
 	segments, err := collectSegments(dir)
 	if err != nil {
 		return "", fmt.Errorf("collect segments: %w", err)
@@ -192,6 +194,7 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		os.Remove(tmpOutput)
 		return "", fmt.Errorf("ffmpeg concat failed: %w\nstderr: %s", err, stderr.String())
 	}
 
@@ -276,6 +279,7 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		os.Remove(outputPath)
 		return fmt.Errorf("ffmpeg failed: %w\nstderr: %s", err, stderr.String())
 	}
 	return nil
@@ -332,6 +336,9 @@ func collectImages(dir string) ([]string, error) {
 }
 
 // collectSegments returns sorted timelapse-segment-*.mp4 paths from dir.
+// In-progress or stale .tmp.mp4 files (left behind when an encode is killed
+// mid-write) are excluded — concatenating a truncated segment would corrupt
+// the final video.
 func collectSegments(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -339,12 +346,34 @@ func collectSegments(dir string) ([]string, error) {
 	}
 	var segs []string
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(strings.ToLower(e.Name()), "timelapse-segment-") {
-			segs = append(segs, filepath.Join(dir, e.Name()))
+		name := strings.ToLower(e.Name())
+		if e.IsDir() || !strings.HasPrefix(name, "timelapse-segment-") || strings.Contains(name, ".tmp.") {
+			continue
 		}
+		segs = append(segs, filepath.Join(dir, e.Name()))
 	}
 	sort.Strings(segs)
 	return segs, nil
+}
+
+// removeStaleTmp deletes leftover timelapse-*.tmp.mp4 files from dir. Called
+// before finalizing so segments killed mid-encode on a previous run don't
+// linger alongside the real outputs.
+func removeStaleTmp(dir string, logger *slog.Logger) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		name := strings.ToLower(e.Name())
+		if e.IsDir() || !strings.HasPrefix(name, "timelapse-") || !strings.HasSuffix(name, ".tmp.mp4") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		if err := os.Remove(path); err == nil {
+			logger.Info("removed stale timelapse temp file", "path", path)
+		}
+	}
 }
 
 // allWebP returns true when every image in the list is a WebP file. Used to
