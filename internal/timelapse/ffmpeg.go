@@ -205,7 +205,7 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	}
 
 	logger.Info("concatenating timelapse segments", "segments", len(segments))
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := ffmpegCommand(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -233,6 +233,17 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	)
 
 	return outputPath, nil
+}
+
+// ffmpegCommand builds an ffmpeg invocation at lowest CPU priority via nice.
+// Segment encodes run while the camera is capturing; on a Pi an unniced
+// encode competes with frame readout and processing. Falls back to a direct
+// invocation when nice isn't available.
+func ffmpegCommand(ctx context.Context, args ...string) *exec.Cmd {
+	if nicePath, err := exec.LookPath("nice"); err == nil {
+		return exec.CommandContext(ctx, nicePath, append([]string{"-n", "19", "ffmpeg"}, args...)...)
+	}
+	return exec.CommandContext(ctx, "ffmpeg", args...)
 }
 
 // encodeImages runs ffmpeg to encode images into a video file at outputPath.
@@ -293,7 +304,7 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 		outputPath,
 	)
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := ffmpegCommand(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
