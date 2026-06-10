@@ -177,23 +177,38 @@ func captureCmd() *cobra.Command {
 			// Create and configure the capture loop.
 			loop := capture.NewLoop(cam, cfg, logger)
 
-			// Wire up image upload callback.
+			// Wire up image upload callback. Uploads run on a small worker
+			// pool fed by a bounded queue, so a slow uplink can't pile up a
+			// goroutine per frame; when the queue is full the frame's upload
+			// is dropped with a warning (the uplink is behind regardless).
 			if cfg.Upload.UploadImages && (s3Uploader != nil || httpUploader != nil) {
+				type uploadJob struct {
+					path    string
+					dateDir string
+				}
+				jobs := make(chan uploadJob, 64)
+				for i := 0; i < 2; i++ {
+					go func() {
+						for j := range jobs {
+							if s3Uploader != nil {
+								if err := s3Uploader.Upload(ctx, j.path, j.dateDir); err != nil {
+									logger.Error("S3 image upload failed", "error", err)
+								}
+							}
+							if httpUploader != nil {
+								if err := httpUploader.Upload(ctx, j.path); err != nil {
+									logger.Error("HTTP image upload failed", "error", err)
+								}
+							}
+						}
+					}()
+				}
 				loop.OnImageSaved = func(path string, meta camera.CaptureMeta) {
-					dateDir := meta.Timestamp.Format("2006-01-02")
-					if s3Uploader != nil {
-						go func() {
-							if err := s3Uploader.Upload(ctx, path, dateDir); err != nil {
-								logger.Error("S3 image upload failed", "error", err)
-							}
-						}()
-					}
-					if httpUploader != nil {
-						go func() {
-							if err := httpUploader.Upload(ctx, path); err != nil {
-								logger.Error("HTTP image upload failed", "error", err)
-							}
-						}()
+					j := uploadJob{path: path, dateDir: meta.Timestamp.Format("2006-01-02")}
+					select {
+					case jobs <- j:
+					default:
+						logger.Warn("upload queue full, skipping frame upload", "path", path)
 					}
 				}
 			}

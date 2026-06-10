@@ -61,6 +61,10 @@ type Loop struct {
 	nightFrameCount int
 	segmentWg       sync.WaitGroup
 
+	// thumbSem bounds concurrent thumbnail encodes; when full, the thumbnail
+	// is skipped and the web server generates it on demand instead.
+	thumbSem chan struct{}
+
 	// Callbacks for upload integration.
 	OnImageSaved func(path string, meta camera.CaptureMeta)
 	OnNightEnd   func(dateDir string)
@@ -69,9 +73,10 @@ type Loop struct {
 // NewLoop creates a new capture loop.
 func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 	l := &Loop{
-		cam:    cam,
-		cfg:    cfg,
-		logger: logger,
+		cam:      cam,
+		cfg:      cfg,
+		logger:   logger,
+		thumbSem: make(chan struct{}, 2),
 	}
 
 	// Initialize dark frame manager if enabled.
@@ -306,11 +311,17 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		// Generate thumbnail from the already-decoded image so the web UI
 		// serves pre-built thumbnails without re-decoding from disk.
-		go func(img image.Image, path string) {
-			if err := imgutil.CacheThumb(img, path); err != nil {
-				l.logger.Debug("thumbnail generation failed", "error", err)
-			}
-		}(processedImg, outputPath)
+		select {
+		case l.thumbSem <- struct{}{}:
+			go func(img image.Image, path string) {
+				defer func() { <-l.thumbSem }()
+				if err := imgutil.CacheThumb(img, path); err != nil {
+					l.logger.Debug("thumbnail generation failed", "error", err)
+				}
+			}(processedImg, outputPath)
+		default:
+			l.logger.Debug("thumbnail workers busy, skipping", "path", outputPath)
+		}
 
 		// Notify upload handler.
 		if l.OnImageSaved != nil {
