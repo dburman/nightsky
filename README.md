@@ -364,9 +364,10 @@ output:
   # Combine with days_to_keep to remove entire directories after even longer.
   prune_raw_after_days: 0
 
-  # EXPERIMENTAL: process each frame from its linear DNG instead of the 8-bit
-  # ISP output (see "Raw calibration pipeline" below). Default off — when
-  # false, none of the raw pipeline code runs.
+  # EXPERIMENTAL: single switch for raw mode. true = capture DNGs (implied,
+  # both modes) and process each frame from the linear raw (see "Raw
+  # calibration pipeline" below). false = run exactly as before; none of the
+  # raw pipeline code executes.
   raw_calibration: false
 
   # Requires: apt-get install webp
@@ -378,12 +379,15 @@ output:
 
 #### Raw calibration pipeline (experimental)
 
-With `output.raw_calibration: true`, frames are processed from the **linear 12-bit DNG** rather than the gamma-encoded 8-bit ISP output: the DNG is decoded, the nearest linear master dark (`darkraw_*.png`, produced by `nightsky dark` from DNG sidecars) is subtracted, auto-exposure is metered from the linear data, and the frame is debayered with the mode's `wb_red`/`wb_blue` gains and gamma 2.2. Flat-field correction, stretch, and overlay then apply as usual.
+`output.raw_calibration` is a **single switch** that selects how the camera runs:
+
+- `false` (default) — capture runs exactly as it always has; none of the raw pipeline code executes.
+- `true` — DNG capture is turned on automatically in both modes (no separate `save_raw` needed) and frames are processed from the **linear 12-bit DNG** rather than the gamma-encoded 8-bit ISP output: the DNG is decoded, the nearest linear master dark (`darkraw_*.png`, produced by `nightsky dark` from DNG sidecars) is subtracted, auto-exposure is metered from the linear data, and the frame is debayered with the mode's `wb_red`/`wb_blue` gains and gamma 2.2. Flat-field correction, stretch, and overlay then apply as usual.
 
 Calibrating in linear space is where dark subtraction is physically valid — hot pixels and dark current subtract exactly instead of approximately on gamma-encoded pixels. Caveats:
 
-- Requires `save_raw: true` in the active mode and the `libcamera` backend (DNG capture). The capture command warns at startup if these don't hold.
-- **Strictly opt-in and fail-safe**: when the flag is off none of the raw code runs; when on, any per-frame error (missing DNG, decode failure) falls back to the standard 8-bit image with a warning.
+- Requires the `libcamera` backend (DNG capture); the capture command warns at startup otherwise. `save_raw` remains available independently for keeping DNG sidecars without raw processing.
+- **Fail-safe**: any per-frame error (missing DNG, decode failure) falls back to the standard 8-bit image with a warning.
 - The linear metered mean reads darker than the display-image mean for the same scene — retune `target_brightness` when enabling.
 - With `awb: true`, libcamera's dynamic gains aren't recorded in the DNG, so the configured `wb_red`/`wb_blue` are used; no colour-correction matrix is applied, so colours approximate the ISP output.
 - Raw master *flats* are not yet supported; the RGB flat applies after debayer.

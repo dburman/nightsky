@@ -113,16 +113,14 @@ func captureCmd() *cobra.Command {
 					"set segment_frames: 0 for full-night deflicker")
 			}
 
-			// Raw calibration preconditions — warn rather than fail so a shared
-			// config can enable it for the libcamera host only.
+			// raw_calibration is the single switch for the raw pipeline; config
+			// loading already turned on DNG capture for both modes when set.
 			if cfg.Output.RawCalibration {
 				if cfg.Camera.Type != "libcamera" {
 					logger.Warn("output.raw_calibration requires DNG capture, which only the libcamera backend provides; " +
 						"the raw pipeline will never run with camera.type=" + cfg.Camera.Type)
-				}
-				if !cfg.Night.SaveRaw && !cfg.Day.SaveRaw {
-					logger.Warn("output.raw_calibration is enabled but save_raw is off in both modes; " +
-						"the raw pipeline will never run — set night.save_raw: true")
+				} else {
+					logger.Info("raw calibration pipeline enabled (DNG capture on in both modes)")
 				}
 			}
 

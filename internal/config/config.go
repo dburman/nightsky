@@ -111,13 +111,14 @@ type OutputConfig struct {
 	// trails, WB analysis). 0 = disabled. Runs independently of DaysToKeep /
 	// MinFreeGB — use together to retain summaries longer than raw frames.
 	PruneRawAfterDays int `mapstructure:"prune_raw_after_days" json:"prune_raw_after_days"`
-	// RawCalibration enables the experimental linear-raw processing pipeline:
-	// each frame's DNG is decoded, dark-subtracted against a raw master
-	// (darkraw_*.png), metered, and debayered in linear space before the
-	// usual flat/stretch/overlay steps. Requires save_raw in the active mode
-	// (libcamera only). On any per-frame error the loop falls back to the
-	// standard 8-bit processed image. Default false — when off, none of the
-	// raw pipeline code runs.
+	// RawCalibration is the single switch for the experimental linear-raw
+	// pipeline. When true, DNG capture is implied for both modes (save_raw is
+	// forced on at config load) and each frame is decoded from its DNG,
+	// dark-subtracted against a raw master (darkraw_*.png), metered, and
+	// debayered in linear space before the usual flat/stretch/overlay steps;
+	// per-frame errors fall back to the standard 8-bit image. libcamera only.
+	// When false (default), capture runs exactly as it always has — none of
+	// the raw pipeline code executes.
 	RawCalibration bool `mapstructure:"raw_calibration" json:"raw_calibration"`
 	// Overlay enables timestamp/metadata text on images.
 	Overlay bool `mapstructure:"overlay"          json:"overlay"`
@@ -288,6 +289,15 @@ func Load(configPath string) (*Config, error) {
 
 	if err := validate(&cfg); err != nil {
 		return nil, err
+	}
+
+	// raw_calibration is the single switch for the raw pipeline: it implies
+	// DNG capture in both modes so no second flag must be coordinated. This
+	// applies to every command (capture, dark, process) uniformly. When the
+	// flag is off, nothing is changed and capture runs as it always has.
+	if cfg.Output.RawCalibration {
+		cfg.Night.SaveRaw = true
+		cfg.Day.SaveRaw = true
 	}
 
 	return &cfg, nil
