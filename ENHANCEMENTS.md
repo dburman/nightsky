@@ -90,7 +90,7 @@ preset is the highest-leverage size win.
   - Tests: stale `.tmp` removed, real frames untouched.
   - **Commit:** `Remove stale partial-frame .tmp files on startup`
 
-- [ ] **Step 8 — Cache last-seen sensor temperature (libcamera)**
+- [x] **Step 8 — Cache last-seen sensor temperature (libcamera)**
   `Temperature()` always returns 0 for libcamera; temp is only present in
   per-capture metadata. Cache the last parsed value so metrics and any
   temperature-aware logic see a real number between captures.

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dburman/nightsky/internal/camera"
@@ -30,6 +31,12 @@ type Camera struct {
 	info      camera.CameraInfo
 	tmpDir    string
 	stillBin  string // resolved path to rpicam-still or libcamera-still
+
+	// lastTemp caches the sensor temperature parsed from the most recent
+	// capture's metadata. libcamera only reports temperature per-capture, so
+	// Temperature() returns this between captures. Guarded by mu.
+	mu       sync.RWMutex
+	lastTemp float64
 }
 
 // New creates a new libcamera camera instance.
@@ -152,6 +159,11 @@ func (c *Camera) Capture(ctx context.Context, settings camera.CaptureSettings) (
 
 	// Parse metadata for actual capture parameters.
 	meta := c.parseMetadata(metadataPath)
+	if meta.temperature != 0 {
+		c.mu.Lock()
+		c.lastTemp = meta.temperature
+		c.mu.Unlock()
+	}
 	meanBrightness := computeMeanBrightness(img)
 
 	bounds := img.Bounds()
@@ -195,8 +207,11 @@ func (c *Camera) SetCooler(_ camera.CoolerSettings) error {
 }
 
 func (c *Camera) Temperature() (float64, error) {
-	// Temperature is only available after capture via metadata.
-	return 0, nil
+	// libcamera reports temperature only in per-capture metadata; return the
+	// last value seen (0 before the first capture populates it).
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.lastTemp, nil
 }
 
 func (c *Camera) buildArgs(s camera.CaptureSettings, outputPath, metadataPath, encoding string) []string {
