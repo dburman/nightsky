@@ -138,8 +138,10 @@ are **not yet wired into the live capture loop**, which still processes the
 8-bit decoded image. Activating raw calibration end-to-end still needs:
 
 - [x] **Debayer** (CFA → RGB) so calibrated raw can feed overlay/stretch/save.
-- [ ] **Raw master darks/flats** — average the dark/flat DNGs into raw masters
-  (the dark library currently stores RGB PNGs; the DNG sidecars are unused).
+- [x] **Raw master darks** — dark DNG sidecars are median-stacked into linear
+  Gray16 masters (`darkraw_*.png`) selected per-frame by `SelectRawDark`.
+  Raw master *flats* are deferred — the flat capture path doesn't save DNGs
+  yet; the existing RGB flat still applies after debayer.
 - [ ] **Pipeline switch** — behind a config flag (e.g. `output.raw_calibration`),
   decode each frame's DNG, subtract dark, divide flat, meter, then debayer.
 - [ ] **Hardware verification** on the Pi against real night frames before

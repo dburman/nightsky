@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/png"
 	"log/slog"
 	"math"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/config"
 	imgutil "github.com/dburman/nightsky/internal/image"
+	"github.com/dburman/nightsky/internal/raw"
 )
 
 // DarkFrameManager handles capture, storage, and subtraction of dark frames.
@@ -28,10 +30,12 @@ type DarkFrameManager struct {
 	cam    camera.Camera
 	logger *slog.Logger
 
-	// cache holds decoded master darks by filename so per-frame selection
-	// doesn't re-read and re-decode from disk every capture.
-	cache        map[string]image.Image
-	lastSelected string // filename of the most recently selected dark, for log de-dup
+	// cache/rawCache hold decoded master darks by filename so per-frame
+	// selection doesn't re-read and re-decode from disk every capture.
+	cache           map[string]image.Image
+	rawCache        map[string]*raw.Image
+	lastSelected    string // most recently selected RGB dark, for log de-dup
+	lastRawSelected string // most recently selected raw master, for log de-dup
 }
 
 // NewDarkFrameManager creates a new dark frame manager.
@@ -117,6 +121,13 @@ func (k DarkFrameKey) filename() string {
 		k.Exposure.Milliseconds(), k.Gain, k.Binning)
 }
 
+// rawFilename is the Gray16 PNG holding the linear CFA master dark for the
+// raw calibration pipeline.
+func (k DarkFrameKey) rawFilename() string {
+	return fmt.Sprintf("darkraw_%dms_gain%.0f_bin%d.png",
+		k.Exposure.Milliseconds(), k.Gain, k.Binning)
+}
+
 // CaptureDarks captures and averages multiple dark frames, saving the result.
 // The camera lens must be covered before calling this.
 func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.CaptureSettings) error {
@@ -137,6 +148,7 @@ func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.Ca
 	)
 
 	var frames []image.Image
+	var rawFrames []*raw.Image
 
 	for i := 0; i < dm.Count; i++ {
 		select {
@@ -162,6 +174,19 @@ func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.Ca
 			} else {
 				dm.logger.Info("dark DNG saved", "path", dngPath)
 			}
+
+			if rimg, err := raw.DecodeDNG(result.DNGData); err != nil {
+				dm.logger.Warn("dark DNG decode failed, raw master will be incomplete", "error", err)
+			} else {
+				rawFrames = append(rawFrames, rimg)
+			}
+		}
+	}
+
+	// Stack the raw frames into a linear master dark for the raw pipeline.
+	if len(rawFrames) > 0 {
+		if err := dm.saveRawMaster(key, rawFrames); err != nil {
+			dm.logger.Warn("raw master dark save failed", "error", err)
 		}
 	}
 
@@ -202,9 +227,33 @@ const darkMatchTolerance = 1.0
 // no dark is within darkMatchTolerance, so a mismatched dark is never
 // subtracted silently.
 func (dm *DarkFrameManager) SelectDark(actual DarkFrameKey) image.Image {
+	file := dm.nearestDarkFile(actual, parseDarkFilename, &dm.lastSelected)
+	if file == "" {
+		return nil
+	}
+	return dm.load(file)
+}
+
+// SelectRawDark is SelectDark for the raw pipeline: it picks the nearest
+// linear CFA master (darkraw_*.png, written by CaptureDarks from DNG
+// sidecars) and returns its decoded samples. Returns nil when none is within
+// tolerance or no raw masters exist.
+func (dm *DarkFrameManager) SelectRawDark(actual DarkFrameKey) *raw.Image {
+	file := dm.nearestDarkFile(actual, parseRawDarkFilename, &dm.lastRawSelected)
+	if file == "" {
+		return nil
+	}
+	return dm.loadRaw(file)
+}
+
+// nearestDarkFile scans the dark directory with the given filename parser and
+// returns the file whose key is closest to actual in exposure-level space, or
+// "" when none is within darkMatchTolerance. lastSelected de-duplicates the
+// selection/warning logs across consecutive frames.
+func (dm *DarkFrameManager) nearestDarkFile(actual DarkFrameKey, parse func(string) (DarkFrameKey, bool), lastSelected *string) string {
 	entries, err := os.ReadDir(dm.Dir)
 	if err != nil {
-		return nil
+		return ""
 	}
 
 	want := exposureLevelOf(actual)
@@ -216,7 +265,7 @@ func (dm *DarkFrameManager) SelectDark(actual DarkFrameKey) image.Image {
 		if e.IsDir() {
 			continue
 		}
-		key, ok := parseDarkFilename(e.Name())
+		key, ok := parse(e.Name())
 		if !ok || key.Binning != actual.Binning {
 			continue
 		}
@@ -227,23 +276,74 @@ func (dm *DarkFrameManager) SelectDark(actual DarkFrameKey) image.Image {
 	}
 
 	if bestFile == "" || bestDist > darkMatchTolerance {
-		if dm.lastSelected != "" {
+		if *lastSelected != "" {
 			dm.logger.Warn("no dark frame within tolerance for current settings; skipping subtraction",
 				"exposure", actual.Exposure, "gain", actual.Gain, "binning", actual.Binning)
-			dm.lastSelected = ""
+			*lastSelected = ""
 		}
-		return nil
+		return ""
 	}
 
-	if bestFile != dm.lastSelected {
+	if bestFile != *lastSelected {
 		dm.logger.Info("selected dark frame",
 			"file", bestFile,
 			"dark_exposure", bestKey.Exposure, "dark_gain", bestKey.Gain,
 			"frame_exposure", actual.Exposure, "frame_gain", actual.Gain,
 			"distance_stops", bestDist)
-		dm.lastSelected = bestFile
+		*lastSelected = bestFile
 	}
-	return dm.load(bestFile)
+	return bestFile
+}
+
+// saveRawMaster median-stacks decoded dark DNGs and persists the linear
+// master as a Gray16 PNG.
+func (dm *DarkFrameManager) saveRawMaster(key DarkFrameKey, frames []*raw.Image) error {
+	master, err := raw.StackMedian(frames)
+	if err != nil {
+		return fmt.Errorf("stack raw darks: %w", err)
+	}
+
+	path := filepath.Join(dm.Dir, key.rawFilename())
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create raw master: %w", err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, master.ToGray16()); err != nil {
+		return fmt.Errorf("encode raw master: %w", err)
+	}
+	dm.logger.Info("raw master dark saved", "path", path, "frames", len(frames))
+	return nil
+}
+
+// loadRaw reads and decodes a Gray16 raw master by filename, caching the result.
+func (dm *DarkFrameManager) loadRaw(name string) *raw.Image {
+	if dm.rawCache == nil {
+		dm.rawCache = make(map[string]*raw.Image)
+	}
+	if im, ok := dm.rawCache[name]; ok {
+		return im
+	}
+
+	f, err := os.Open(filepath.Join(dm.Dir, name))
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		dm.logger.Warn("failed to decode raw master dark", "file", name, "error", err)
+		return nil
+	}
+	g, ok := img.(*image.Gray16)
+	if !ok {
+		dm.logger.Warn("raw master dark is not 16-bit grayscale", "file", name)
+		return nil
+	}
+	im := raw.FromGray16(g)
+	dm.rawCache[name] = im
+	return im
 }
 
 // load reads and decodes a master dark by filename, caching the result.
@@ -289,6 +389,19 @@ func exposureLevelOf(k DarkFrameKey) float64 {
 func parseDarkFilename(name string) (DarkFrameKey, bool) {
 	var ms, gain, bin int
 	if n, err := fmt.Sscanf(name, "dark_%dms_gain%d_bin%d.png", &ms, &gain, &bin); n != 3 || err != nil {
+		return DarkFrameKey{}, false
+	}
+	return DarkFrameKey{
+		Exposure: time.Duration(ms) * time.Millisecond,
+		Gain:     float64(gain),
+		Binning:  bin,
+	}, true
+}
+
+// parseRawDarkFilename reverses DarkFrameKey.rawFilename.
+func parseRawDarkFilename(name string) (DarkFrameKey, bool) {
+	var ms, gain, bin int
+	if n, err := fmt.Sscanf(name, "darkraw_%dms_gain%d_bin%d.png", &ms, &gain, &bin); n != 3 || err != nil {
 		return DarkFrameKey{}, false
 	}
 	return DarkFrameKey{

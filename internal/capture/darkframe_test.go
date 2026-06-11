@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dburman/nightsky/internal/config"
+	"github.com/dburman/nightsky/internal/raw"
 )
 
 // uniformFrame returns a 4x4 RGBA image filled with the given gray value.
@@ -220,6 +221,57 @@ func TestSubtractDark_DimensionMismatchSkips(t *testing.T) {
 	dark := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	if got := SubtractDark(light, dark); got != image.Image(light) {
 		t.Error("expected original light frame returned on dimension mismatch")
+	}
+}
+
+func writeRawDark(t *testing.T, dir string, key DarkFrameKey, v uint16) {
+	t.Helper()
+	im := &raw.Image{Width: 4, Height: 4, Pix: make([]uint16, 16)}
+	for i := range im.Pix {
+		im.Pix[i] = v
+	}
+	f, err := os.Create(filepath.Join(dir, key.rawFilename()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, im.ToGray16()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// SelectRawDark must pick the nearest raw master by the same rules as
+// SelectDark, and ignore the RGB dark files (and vice versa).
+func TestSelectRawDark_NearestAndIsolated(t *testing.T) {
+	dir := t.TempDir()
+	writeRawDark(t, dir, DarkFrameKey{Exposure: 2000 * time.Millisecond, Gain: 200, Binning: 1}, 7)
+	writeRawDark(t, dir, DarkFrameKey{Exposure: 8000 * time.Millisecond, Gain: 200, Binning: 1}, 42)
+	// An RGB dark at the exact target settings must NOT shadow the raw masters.
+	writeDark(t, dir, DarkFrameKey{Exposure: 7000 * time.Millisecond, Gain: 200, Binning: 1}, 99)
+	dm := darkTestManager(dir)
+
+	got := dm.SelectRawDark(DarkFrameKey{Exposure: 7000 * time.Millisecond, Gain: 200, Binning: 1})
+	if got == nil {
+		t.Fatal("expected a raw master within tolerance")
+	}
+	if got.Pix[0] != 42 {
+		t.Errorf("selected wrong raw master: Pix[0] = %d, want 42 (the 8s master)", got.Pix[0])
+	}
+
+	// And the RGB selector must not pick up darkraw_ files.
+	rgb := dm.SelectDark(DarkFrameKey{Exposure: 7000 * time.Millisecond, Gain: 200, Binning: 1})
+	if rgb == nil {
+		t.Fatal("expected the RGB dark")
+	}
+	if r, _, _, _ := rgb.At(0, 0).RGBA(); uint8(r>>8) != 99 {
+		t.Errorf("RGB selector picked wrong file: %d, want 99", uint8(r>>8))
+	}
+}
+
+func TestSelectRawDark_NoneAvailable(t *testing.T) {
+	dm := darkTestManager(t.TempDir())
+	if got := dm.SelectRawDark(DarkFrameKey{Exposure: time.Second, Gain: 100, Binning: 1}); got != nil {
+		t.Error("expected nil with no raw masters")
 	}
 }
 
