@@ -107,7 +107,7 @@ stretch, overlay, timelapse) runs on the 8-bit decoded JPEG/PNG. Real
 calibration happens on the linear Bayer raw. This phase pulls in a DNG/Bayer
 decoder and is a meaningful dependency decision — confirm scope first.
 
-- [ ] **Step 9 — Decode DNG to linear Bayer/16-bit**
+- [x] **Step 9 — Decode DNG to linear Bayer/16-bit**
   Add a raw decode path (library or minimal DNG reader) producing linear sensor
   data. Behind a config flag; no behavior change when disabled.
   - Files: new `internal/raw/` package, `internal/config/config.go`

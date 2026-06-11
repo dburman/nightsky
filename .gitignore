@@ -4,5 +4,6 @@ output/
 darks/
 *.mp4
 *.tmp
+*.dng
 nightsky.yaml
 .env
