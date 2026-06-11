@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/dburman/nightsky/internal/config"
 )
 
 // uniformFrame returns a 4x4 RGBA image filled with the given gray value.
@@ -117,6 +119,58 @@ func TestSelectDark_OutOfToleranceAndBinning(t *testing.T) {
 	if got := dm.SelectDark(DarkFrameKey{Exposure: 1000 * time.Millisecond, Gain: 100, Binning: 2}); got != nil {
 		t.Error("expected nil when only a different-binning dark exists")
 	}
+}
+
+func TestDarkGrid_FixedExposureSinglePoint(t *testing.T) {
+	m := config.ModeConfig{Exposure: time.Second, Gain: 100, Binning: 1, AutoExposure: false}
+	grid := DarkGrid(m)
+	if len(grid) != 1 || grid[0].Exposure != time.Second || grid[0].Gain != 100 {
+		t.Fatalf("fixed-exposure grid = %+v, want single base point", grid)
+	}
+}
+
+func TestDarkGrid_AutoExposureLShape(t *testing.T) {
+	m := config.ModeConfig{
+		Exposure:     4 * time.Second,
+		MaxExposure:  16 * time.Second,
+		Gain:         2,
+		MaxGain:      8,
+		Binning:      1,
+		AutoExposure: true,
+	}
+	grid := DarkGrid(m)
+
+	// Exposure ramp at base gain: 4,8,16 s @ gain 2.
+	// Gain ramp at max exposure: 2,4,8 @ 16 s. (16s@gain2 shared.)
+	wantExpRamp := []time.Duration{4 * time.Second, 8 * time.Second, 16 * time.Second}
+	for _, e := range wantExpRamp {
+		if !containsKey(grid, DarkFrameKey{Exposure: e, Gain: 2, Binning: 1}) {
+			t.Errorf("missing exposure-ramp point %v@gain2", e)
+		}
+	}
+	for _, g := range []float64{2, 4, 8} {
+		if !containsKey(grid, DarkFrameKey{Exposure: 16 * time.Second, Gain: g, Binning: 1}) {
+			t.Errorf("missing gain-ramp point 16s@gain%v", g)
+		}
+	}
+
+	// No duplicates.
+	seen := map[DarkFrameKey]bool{}
+	for _, k := range grid {
+		if seen[k] {
+			t.Errorf("duplicate grid point %+v", k)
+		}
+		seen[k] = true
+	}
+}
+
+func containsKey(grid []DarkFrameKey, k DarkFrameKey) bool {
+	for _, g := range grid {
+		if g == k {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMedianU8(t *testing.T) {

@@ -512,13 +512,15 @@ nightsky timelapse --dir ./output/2026-03-16 --fps 30 --bitrate 4000k --codec li
 
 ### `nightsky dark`
 
-Captures dark frames for calibration. **Cover the camera lens before running this command.** Captures dark frames for both day and night mode exposure settings.
+Captures a **dark library** for calibration. **Cover the camera lens before running this command.**
+
+Because auto-exposure drifts the exposure and gain through the night, a single dark would only match the first frame. Instead, `nightsky dark` sweeps the exposure/gain grid the auto-exposure controller actually follows in each mode — an exposure ramp (doubling from the base up to `max_exposure`) at the base gain, then a gain ramp (doubling from the base up to `max_gain`) at the max exposure — and captures one master dark per grid point. During capture, each frame is matched to the nearest dark in the library (within one stop of `exposure × gain`); if none is close enough, dark subtraction is skipped for that frame rather than using a mismatched dark.
 
 ```bash
 nightsky dark
 ```
 
-Dark frames are saved to `dark.directory` (default `./darks/`) and are automatically loaded during capture when `dark.enabled` is true.
+Dark frames are saved to `dark.directory` (default `./darks/`), one PNG per grid point named `dark_<ms>ms_gain<g>_bin<n>.png`, and are selected automatically during capture when `dark.enabled` is true. For fixed-exposure modes (`auto_exposure: false`) only the single base point is captured.
 
 ### `nightsky flat`
 

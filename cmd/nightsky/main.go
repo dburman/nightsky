@@ -331,7 +331,9 @@ func darkCmd() *cobra.Command {
 
 			darkMgr := capture.NewDarkFrameManager(cfg.Dark.Directory, cfg.Dark.Count, cam, logger)
 
-			// Capture darks for both day and night modes.
+			// Capture a dark library covering the auto-exposure grid for each
+			// mode, so the per-frame SelectDark always finds a close match as
+			// exposure and gain drift through the night.
 			for _, mode := range []struct {
 				name string
 				cfg  config.ModeConfig
@@ -339,20 +341,26 @@ func darkCmd() *cobra.Command {
 				{"night", cfg.Night},
 				{"day", cfg.Day},
 			} {
-				fmt.Printf("Capturing dark frames for %s mode (exposure=%v, gain=%.0f)...\n",
-					mode.name, mode.cfg.Exposure, mode.cfg.Gain)
+				grid := capture.DarkGrid(mode.cfg)
+				fmt.Printf("Capturing %d dark library point(s) for %s mode...\n", len(grid), mode.name)
 
-				settings := camera.CaptureSettings{
-					Exposure: mode.cfg.Exposure,
-					Gain:     mode.cfg.Gain,
-					Binning:  mode.cfg.Binning,
-					Format:   camera.FormatRGB24,
-					SaveRaw:  mode.cfg.SaveRaw,
-				}
+				for i, key := range grid {
+					fmt.Printf("  [%d/%d] %s mode: exposure=%v, gain=%.0f, bin=%d\n",
+						i+1, len(grid), mode.name, key.Exposure, key.Gain, key.Binning)
 
-				if err := darkMgr.CaptureDarks(context.Background(), settings); err != nil {
-					logger.Error("dark frame capture failed", "mode", mode.name, "error", err)
-					continue
+					settings := camera.CaptureSettings{
+						Exposure: key.Exposure,
+						Gain:     key.Gain,
+						Binning:  key.Binning,
+						Format:   camera.FormatRGB24,
+						SaveRaw:  mode.cfg.SaveRaw,
+					}
+
+					if err := darkMgr.CaptureDarks(context.Background(), settings); err != nil {
+						logger.Error("dark frame capture failed",
+							"mode", mode.name, "exposure", key.Exposure, "gain", key.Gain, "error", err)
+						continue
+					}
 				}
 			}
 

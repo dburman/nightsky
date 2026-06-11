@@ -33,7 +33,7 @@ scales with exposure and gain, so most of the night subtracts the wrong dark.
   - Tests: nearest-match selection; no-match path skips subtraction.
   - **Commit:** `Match dark frames to actual per-frame exposure and gain`
 
-- [ ] **Step 3 — Capture a dark library across the auto-exposure grid**
+- [x] **Step 3 — Capture a dark library across the auto-exposure grid**
   Extend `nightsky dark` to sweep the exposure/gain combinations the controller
   can visit at night (e.g. 1/2/4/8/15.5s × a few gains) and store one master
   dark per grid point. `LoadDark` picks the nearest grid point (combined with

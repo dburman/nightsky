@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dburman/nightsky/internal/camera"
+	"github.com/dburman/nightsky/internal/config"
 	imgutil "github.com/dburman/nightsky/internal/image"
 )
 
@@ -43,6 +44,67 @@ func NewDarkFrameManager(dir string, count int, cam camera.Camera, logger *slog.
 		cam:    cam,
 		logger: logger,
 	}
+}
+
+// DarkGrid returns the set of (exposure, gain, binning) points to capture
+// master darks for, covering the trajectory the auto-exposure controller
+// actually follows in this mode. The controller maximizes exposure before
+// raising gain (see exposure.go decompose), so the grid is L-shaped: an
+// exposure ramp (doubling from the base up to max) at the base gain, then a
+// gain ramp (doubling from base to max) at the max exposure. This is far
+// cheaper than a full cross product while still landing a dark within ~one
+// stop of any frame SelectDark will see.
+//
+// For fixed-exposure modes (auto_exposure off) it returns the single base
+// point. Points are deduplicated.
+func DarkGrid(m config.ModeConfig) []DarkFrameKey {
+	binning := m.Binning
+	if binning == 0 {
+		binning = 1
+	}
+
+	base := DarkFrameKey{Exposure: m.Exposure, Gain: m.Gain, Binning: binning}
+	if !m.AutoExposure {
+		return []DarkFrameKey{base}
+	}
+
+	maxExp := m.MaxExposure
+	if maxExp < m.Exposure {
+		maxExp = m.Exposure
+	}
+	maxGain := m.MaxGain
+	if maxGain < m.Gain {
+		maxGain = m.Gain
+	}
+
+	seen := map[DarkFrameKey]bool{}
+	var grid []DarkFrameKey
+	add := func(k DarkFrameKey) {
+		if k.Binning == 0 {
+			k.Binning = 1
+		}
+		if !seen[k] {
+			seen[k] = true
+			grid = append(grid, k)
+		}
+	}
+
+	// Exposure ramp at base gain: base, 2x, 4x, ... up to max.
+	for e := m.Exposure; e < maxExp; e *= 2 {
+		add(DarkFrameKey{Exposure: e, Gain: m.Gain, Binning: binning})
+	}
+	add(DarkFrameKey{Exposure: maxExp, Gain: m.Gain, Binning: binning})
+
+	// Gain ramp at max exposure: base, 2x, 4x, ... up to max.
+	for g := m.Gain; g < maxGain; g *= 2 {
+		if g < 1 {
+			g = 1
+		}
+		add(DarkFrameKey{Exposure: maxExp, Gain: g, Binning: binning})
+	}
+	add(DarkFrameKey{Exposure: maxExp, Gain: maxGain, Binning: binning})
+
+	return grid
 }
 
 // DarkFrameKey uniquely identifies a dark frame by its capture parameters.
