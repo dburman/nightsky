@@ -52,7 +52,7 @@ nothing exposes `-preset`, GOP, or tune — so AV1/x265 run at encoder defaults.
 For an all-sky timelapse (large flat dark regions, slow motion) AV1 at a tuned
 preset is the highest-leverage size win.
 
-- [ ] **Step 4 — Expose encoder preset, keyframe interval, and tune**
+- [x] **Step 4 — Expose encoder preset, keyframe interval, and tune**
   Add `preset`, `gop` (keyframe interval), and optional `tune` to
   `TimelapseConfig` and the `timelapse`/`process` command flags; thread them into
   `encodeImages`. Sensible defaults that don't change current output when unset.

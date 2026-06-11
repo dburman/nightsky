@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dburman/nightsky/internal/config"
 )
 
 // Config holds parameters for timelapse video generation.
@@ -27,6 +29,29 @@ type Config struct {
 	// Deflicker smooths per-frame brightness variation caused by clouds,
 	// auto-exposure steps, and atmospheric changes.
 	Deflicker bool
+	// Preset selects the encoder speed/efficiency trade-off (e.g. x264/x265
+	// "slow", SVT-AV1 "0"-"13"). Slower presets yield smaller files at equal
+	// quality. Empty = encoder default.
+	Preset string
+	// GOP sets the maximum keyframe interval (-g). A long GOP shrinks a
+	// static-camera timelapse; 0 = encoder default.
+	GOP int
+	// Tune passes an encoder -tune value. Empty = none.
+	Tune string
+}
+
+// FromConfig maps the persisted timelapse settings to an encode Config.
+func FromConfig(c config.TimelapseConfig) Config {
+	return Config{
+		FPS:       c.FPS,
+		Bitrate:   c.Bitrate,
+		Codec:     c.Codec,
+		CRF:       c.CRF,
+		Deflicker: c.Deflicker,
+		Preset:    c.Preset,
+		GOP:       c.GOP,
+		Tune:      c.Tune,
+	}
 }
 
 // DefaultConfig returns sensible timelapse defaults.
@@ -292,6 +317,16 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 		}
 	} else {
 		args = append(args, "-b:v", cfg.Bitrate)
+	}
+
+	if cfg.Preset != "" {
+		args = append(args, "-preset", cfg.Preset)
+	}
+	if cfg.Tune != "" {
+		args = append(args, "-tune", cfg.Tune)
+	}
+	if cfg.GOP > 0 {
+		args = append(args, "-g", fmt.Sprintf("%d", cfg.GOP))
 	}
 
 	if cfg.Deflicker {

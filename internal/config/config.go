@@ -186,6 +186,14 @@ type TimelapseConfig struct {
 	CRF int `mapstructure:"crf"        json:"crf"`
 	// Deflicker smooths per-frame brightness variation in the output video.
 	Deflicker bool `mapstructure:"deflicker"  json:"deflicker"`
+	// Preset selects the encoder speed/efficiency trade-off (e.g. "slow" for
+	// x264/x265, "0"–"13" for SVT-AV1). Slower = smaller at equal quality.
+	Preset string `mapstructure:"preset" json:"preset"`
+	// GOP sets the max keyframe interval (-g). Long GOPs shrink a
+	// static-camera timelapse. 0 = encoder default.
+	GOP int `mapstructure:"gop" json:"gop"`
+	// Tune passes an encoder -tune value (codec-specific). Empty = none.
+	Tune string `mapstructure:"tune" json:"tune"`
 	// SegmentFrames, when > 0, enables iterative mode: a video segment is
 	// encoded after every N captured frames. At end of night the segments are
 	// concatenated with stream copy (no re-encode). 0 = encode at end of night.
@@ -348,6 +356,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.crf", 0)
 	v.SetDefault("output.timelapse.deflicker", false)
 	v.SetDefault("output.timelapse.segment_frames", 0)
+	v.SetDefault("output.timelapse.preset", "")
+	v.SetDefault("output.timelapse.gop", 0)
+	v.SetDefault("output.timelapse.tune", "")
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)

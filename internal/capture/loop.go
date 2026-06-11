@@ -365,13 +365,7 @@ func (l *Loop) Run(ctx context.Context) error {
 				if l.nightFrameCount%sf == 0 {
 					segIdx := (l.nightFrameCount / sf) - 1
 					dir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
-					tlCfg := timelapse.Config{
-						FPS:       l.cfg.Output.Timelapse.FPS,
-						Bitrate:   l.cfg.Output.Timelapse.Bitrate,
-						Codec:     l.cfg.Output.Timelapse.Codec,
-						CRF:       l.cfg.Output.Timelapse.CRF,
-						Deflicker: l.cfg.Output.Timelapse.Deflicker,
-					}
+					tlCfg := timelapse.FromConfig(l.cfg.Output.Timelapse)
 					segWg := l.segmentWg
 					segWg.Add(1)
 					go func(idx int) {

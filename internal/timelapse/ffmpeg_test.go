@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/dburman/nightsky/internal/config"
 )
 
 func touch(t *testing.T, dir, name string) {
@@ -43,6 +45,75 @@ func TestCollectSegments_ExcludesTmpFiles(t *testing.T) {
 		if segs[i] != want[i] {
 			t.Errorf("segs[%d] = %s, want %s", i, segs[i], want[i])
 		}
+	}
+}
+
+// encodeArgs is the arg-building logic of encodeImages, extracted for testing
+// without invoking ffmpeg. Keep in sync with encodeImages.
+func buildEncodeArgsForTest(listPath string, cfg Config, allWebPInput bool) []string {
+	args := []string{"-y", "-r", "25", "-f", "concat", "-safe", "0"}
+	if allWebPInput {
+		args = append(args, "-c:v", "webp")
+	}
+	args = append(args, "-i", listPath, "-vcodec", cfg.Codec)
+	if cfg.CRF > 0 {
+		args = append(args, "-crf", "x")
+	} else {
+		args = append(args, "-b:v", cfg.Bitrate)
+	}
+	if cfg.Preset != "" {
+		args = append(args, "-preset", cfg.Preset)
+	}
+	if cfg.Tune != "" {
+		args = append(args, "-tune", cfg.Tune)
+	}
+	if cfg.GOP > 0 {
+		args = append(args, "-g", "x")
+	}
+	return args
+}
+
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+func TestEncodeArgs_OptionalFlags(t *testing.T) {
+	// Unset preset/tune/gop must not appear.
+	bare := buildEncodeArgsForTest("list.txt", Config{Codec: "libx264", Bitrate: "2000k"}, false)
+	for _, flag := range []string{"-preset", "-tune", "-g"} {
+		if hasFlag(bare, flag) {
+			t.Errorf("%s present when unset", flag)
+		}
+	}
+
+	// Set values must appear.
+	full := buildEncodeArgsForTest("list.txt", Config{
+		Codec: "libsvtav1", CRF: 32, Preset: "6", GOP: 250, Tune: "psnr",
+	}, false)
+	for _, flag := range []string{"-preset", "-tune", "-g", "-crf"} {
+		if !hasFlag(full, flag) {
+			t.Errorf("%s missing when set", flag)
+		}
+	}
+}
+
+func TestFromConfig_MapsAllFields(t *testing.T) {
+	c := config.TimelapseConfig{
+		FPS: 30, Bitrate: "3000k", Codec: "libsvtav1", CRF: 32,
+		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr",
+	}
+	got := FromConfig(c)
+	want := Config{
+		FPS: 30, Bitrate: "3000k", Codec: "libsvtav1", CRF: 32,
+		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr",
+	}
+	if got != want {
+		t.Errorf("FromConfig = %+v, want %+v", got, want)
 	}
 }
 

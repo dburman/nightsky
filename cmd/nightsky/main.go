@@ -261,6 +261,10 @@ func timelapseCmd() *cobra.Command {
 		fps     int
 		bitrate string
 		codec   string
+		crf     int
+		preset  string
+		gop     int
+		tune    string
 	)
 
 	cmd := &cobra.Command{
@@ -287,6 +291,10 @@ func timelapseCmd() *cobra.Command {
 				FPS:     fps,
 				Bitrate: bitrate,
 				Codec:   codec,
+				CRF:     crf,
+				Preset:  preset,
+				GOP:     gop,
+				Tune:    tune,
 			}
 
 			path, err := timelapse.Generate(context.Background(), dir, tlCfg, logger)
@@ -301,8 +309,12 @@ func timelapseCmd() *cobra.Command {
 
 	cmd.Flags().StringVarP(&dir, "dir", "d", "", "image directory (default: most recent)")
 	cmd.Flags().IntVar(&fps, "fps", 25, "frames per second")
-	cmd.Flags().StringVar(&bitrate, "bitrate", "2000k", "video bitrate")
-	cmd.Flags().StringVar(&codec, "codec", "libx264", "video codec")
+	cmd.Flags().StringVar(&bitrate, "bitrate", "2000k", "video bitrate (used when crf is 0)")
+	cmd.Flags().StringVar(&codec, "codec", "libx264", "video codec (libx264, libx265, libsvtav1, libaom-av1)")
+	cmd.Flags().IntVar(&crf, "crf", 0, "constant-rate-factor quality (0 = use bitrate)")
+	cmd.Flags().StringVar(&preset, "preset", "", "encoder preset (e.g. slow for x264/x265, 6 for SVT-AV1)")
+	cmd.Flags().IntVar(&gop, "gop", 0, "max keyframe interval in frames (0 = encoder default)")
+	cmd.Flags().StringVar(&tune, "tune", "", "encoder tune value (codec-specific)")
 
 	return cmd
 }
@@ -598,13 +610,7 @@ func runNightEndProcessing(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tlCfg := timelapse.Config{
-				FPS:       cfg.Output.Timelapse.FPS,
-				Bitrate:   cfg.Output.Timelapse.Bitrate,
-				Codec:     cfg.Output.Timelapse.Codec,
-				CRF:       cfg.Output.Timelapse.CRF,
-				Deflicker: cfg.Output.Timelapse.Deflicker,
-			}
+			tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
 			date := filepath.Base(dateDir)
 			var videoPath string
 			var err error
