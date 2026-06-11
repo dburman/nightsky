@@ -173,6 +173,56 @@ func containsKey(grid []DarkFrameKey, k DarkFrameKey) bool {
 	return false
 }
 
+// gradientFrame returns a 16x12 image whose channels vary per pixel, so the
+// fast .Pix path is exercised on non-uniform data.
+func gradientFrame(off uint8) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, 16, 12))
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetRGBA(x, y, color.RGBA{
+				R: uint8(x*4) + off,
+				G: uint8(y*8) + off,
+				B: uint8(x+y) + off,
+				A: 255,
+			})
+		}
+	}
+	return img
+}
+
+// SubtractDark over packed buffers must match a straightforward At()-based
+// reference, including clamping at zero.
+func TestSubtractDark_MatchesReference(t *testing.T) {
+	light := gradientFrame(40)
+	dark := gradientFrame(10)
+
+	got := SubtractDark(light, dark)
+
+	b := light.Bounds()
+	for y := 0; y < b.Dy(); y++ {
+		for x := 0; x < b.Dx(); x++ {
+			lr, lg, lb, _ := light.At(x, y).RGBA()
+			dr, dg, db, _ := dark.At(x, y).RGBA()
+			wantR := clampSub8(uint8(lr>>8), uint8(dr>>8))
+			wantG := clampSub8(uint8(lg>>8), uint8(dg>>8))
+			wantB := clampSub8(uint8(lb>>8), uint8(db>>8))
+			gr, gg, gb, _ := got.At(x, y).RGBA()
+			if uint8(gr>>8) != wantR || uint8(gg>>8) != wantG || uint8(gb>>8) != wantB {
+				t.Fatalf("pixel (%d,%d): got (%d,%d,%d), want (%d,%d,%d)",
+					x, y, uint8(gr>>8), uint8(gg>>8), uint8(gb>>8), wantR, wantG, wantB)
+			}
+		}
+	}
+}
+
+func TestSubtractDark_DimensionMismatchSkips(t *testing.T) {
+	light := gradientFrame(0)
+	dark := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	if got := SubtractDark(light, dark); got != image.Image(light) {
+		t.Error("expected original light frame returned on dimension mismatch")
+	}
+}
+
 func TestMedianU8(t *testing.T) {
 	if got := medianU8([]uint8{255, 10, 10}); got != 10 {
 		t.Errorf("median of {255,10,10} = %d, want 10", got)

@@ -72,7 +72,7 @@ preset is the highest-leverage size win.
 
 ## Phase 3 — Capture-path efficiency
 
-- [ ] **Step 6 — Direct `.Pix` access in hot per-pixel loops**
+- [x] **Step 6 — Direct `.Pix` access in hot per-pixel loops**
   `SubtractDark`, `averageFrames`, and `computeMeanBrightness` call
   `image.At()` per pixel — millions of interface dispatches per 4056×3040 frame.
   Type-assert to `*image.RGBA` / `*image.NRGBA` and walk `.Pix` directly, with

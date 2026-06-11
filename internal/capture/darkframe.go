@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"image"
-	"image/color"
-	"image/draw"
 	"log/slog"
 	"math"
 	"os"
@@ -300,42 +298,32 @@ func parseDarkFilename(name string) (DarkFrameKey, bool) {
 	}, true
 }
 
-// SubtractDark subtracts a dark frame from a light frame pixel by pixel.
-// Values are clamped to 0 (no negative values).
+// SubtractDark subtracts a dark frame from a light frame pixel by pixel,
+// clamping at 0. Both inputs are converted to *image.RGBA once and the
+// subtraction runs over the packed pixel buffers, avoiding millions of
+// per-pixel interface calls on a full-resolution frame.
 func SubtractDark(light, dark image.Image) image.Image {
 	bounds := light.Bounds()
-	darkBounds := dark.Bounds()
-
-	// Ensure same dimensions.
-	if bounds.Dx() != darkBounds.Dx() || bounds.Dy() != darkBounds.Dy() {
+	if bounds.Dx() != dark.Bounds().Dx() || bounds.Dy() != dark.Bounds().Dy() {
 		return light // dimensions don't match, skip subtraction
 	}
 
-	result := image.NewRGBA(bounds)
+	l := imgutil.ToRGBA(light)
+	d := imgutil.ToRGBA(dark)
+	result := image.NewRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
 
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			lr, lg, lb, la := light.At(x, y).RGBA()
-			dr, dg, db, _ := dark.At(x, y).RGBA()
-
-			// Subtract with clamping (values are 16-bit, shift to 8-bit).
-			r := clampSub(lr>>8, dr>>8)
-			g := clampSub(lg>>8, dg>>8)
-			b := clampSub(lb>>8, db>>8)
-
-			result.SetRGBA(x, y, color.RGBA{
-				R: uint8(r),
-				G: uint8(g),
-				B: uint8(b),
-				A: uint8(la >> 8),
-			})
-		}
+	lp, dp, rp := l.Pix, d.Pix, result.Pix
+	n := len(rp)
+	for i := 0; i < n; i += 4 {
+		rp[i] = clampSub8(lp[i], dp[i])
+		rp[i+1] = clampSub8(lp[i+1], dp[i+1])
+		rp[i+2] = clampSub8(lp[i+2], dp[i+2])
+		rp[i+3] = lp[i+3]
 	}
-
 	return result
 }
 
-func clampSub(a, b uint32) uint32 {
+func clampSub8(a, b uint8) uint8 {
 	if a > b {
 		return a - b
 	}
@@ -353,31 +341,27 @@ func stackFrames(frames []image.Image) image.Image {
 	return averageFrames(frames)
 }
 
-// medianFrames computes the pixel-wise per-channel median of multiple frames.
+// medianFrames computes the pixel-wise per-channel median of multiple frames,
+// operating over packed RGBA buffers.
 func medianFrames(frames []image.Image) image.Image {
-	bounds := frames[0].Bounds()
 	n := len(frames)
+	pix := make([][]uint8, n)
+	for i, f := range frames {
+		pix[i] = imgutil.ToRGBA(f).Pix
+	}
 
-	rs := make([]uint8, n)
-	gs := make([]uint8, n)
-	bs := make([]uint8, n)
+	result := image.NewRGBA(image.Rect(0, 0, frames[0].Bounds().Dx(), frames[0].Bounds().Dy()))
+	rp := result.Pix
+	samples := make([]uint8, n)
 
-	result := image.NewRGBA(bounds)
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			for i, f := range frames {
-				r, g, b, _ := f.At(x, y).RGBA()
-				rs[i] = uint8(r >> 8)
-				gs[i] = uint8(g >> 8)
-				bs[i] = uint8(b >> 8)
+	for i := 0; i < len(rp); i += 4 {
+		for c := 0; c < 3; c++ {
+			for f := 0; f < n; f++ {
+				samples[f] = pix[f][i+c]
 			}
-			result.SetRGBA(x, y, color.RGBA{
-				R: medianU8(rs),
-				G: medianU8(gs),
-				B: medianU8(bs),
-				A: 255,
-			})
+			rp[i+c] = medianU8(samples)
 		}
+		rp[i+3] = 255
 	}
 	return result
 }
@@ -388,7 +372,8 @@ func medianU8(vals []uint8) uint8 {
 	return vals[len(vals)/2]
 }
 
-// averageFrames computes the pixel-wise average of multiple frames.
+// averageFrames computes the pixel-wise average of multiple frames over packed
+// RGBA buffers, accumulating per channel in 32-bit to avoid overflow.
 func averageFrames(frames []image.Image) image.Image {
 	if len(frames) == 0 {
 		return image.NewRGBA(image.Rect(0, 0, 1, 1))
@@ -397,42 +382,26 @@ func averageFrames(frames []image.Image) image.Image {
 		return frames[0]
 	}
 
-	bounds := frames[0].Bounds()
-	w := bounds.Dx()
-	h := bounds.Dy()
+	w := frames[0].Bounds().Dx()
+	h := frames[0].Bounds().Dy()
+	size := w * h * 4
 
-	// Accumulate in 32-bit to avoid overflow.
-	accumR := make([]uint32, w*h)
-	accumG := make([]uint32, w*h)
-	accumB := make([]uint32, w*h)
-
+	accum := make([]uint32, size)
 	for _, frame := range frames {
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
-				r, g, b, _ := frame.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-				idx := y*w + x
-				accumR[idx] += r >> 8
-				accumG[idx] += g >> 8
-				accumB[idx] += b >> 8
-			}
+		p := imgutil.ToRGBA(frame).Pix
+		for i := 0; i < size; i++ {
+			accum[i] += uint32(p[i])
 		}
 	}
 
 	n := uint32(len(frames))
-	result := image.NewRGBA(bounds)
-	draw.Draw(result, bounds, image.Transparent, image.Point{}, draw.Src)
-
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			idx := y*w + x
-			result.SetRGBA(bounds.Min.X+x, bounds.Min.Y+y, color.RGBA{
-				R: uint8(accumR[idx] / n),
-				G: uint8(accumG[idx] / n),
-				B: uint8(accumB[idx] / n),
-				A: 255,
-			})
-		}
+	result := image.NewRGBA(image.Rect(0, 0, w, h))
+	rp := result.Pix
+	for i := 0; i < size; i += 4 {
+		rp[i] = uint8(accum[i] / n)
+		rp[i+1] = uint8(accum[i+1] / n)
+		rp[i+2] = uint8(accum[i+2] / n)
+		rp[i+3] = 255
 	}
-
 	return result
 }

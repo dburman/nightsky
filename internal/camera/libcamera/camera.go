@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dburman/nightsky/internal/camera"
+	imgutil "github.com/dburman/nightsky/internal/image"
 )
 
 // Camera implements camera.Camera using the rpicam-still or libcamera-still CLI tool.
@@ -374,21 +375,24 @@ func (c *Camera) probeCamera() camera.CameraInfo {
 }
 
 func computeMeanBrightness(img image.Image) float64 {
-	bounds := img.Bounds()
-	w := bounds.Dx()
-	h := bounds.Dy()
+	rgba := imgutil.ToRGBA(img)
+	w := rgba.Bounds().Dx()
+	h := rgba.Bounds().Dy()
 	if w == 0 || h == 0 {
 		return 0
 	}
 
+	// Sample every 4th pixel in both axes over the packed buffer.
+	const step = 4
+	pix := rgba.Pix
+	stride := rgba.Stride
 	var sum float64
 	var count int
-	step := 4
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y += step {
-		for x := bounds.Min.X; x < bounds.Max.X; x += step {
-			r, g, b, _ := img.At(x, y).RGBA()
-			lum := 0.299*float64(r>>8) + 0.587*float64(g>>8) + 0.114*float64(b>>8)
+	for y := 0; y < h; y += step {
+		row := y * stride
+		for x := 0; x < w; x += step {
+			i := row + x*4
+			lum := 0.299*float64(pix[i]) + 0.587*float64(pix[i+1]) + 0.114*float64(pix[i+2])
 			sum += lum
 			count++
 		}
