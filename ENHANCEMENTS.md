@@ -82,7 +82,7 @@ preset is the highest-leverage size win.
   - Tests: results identical to the `At()` implementation on a known image.
   - **Commit:** `Use direct pixel access in capture hot loops`
 
-- [ ] **Step 7 — Sweep stale `*.tmp` frame files on startup**
+- [x] **Step 7 — Sweep stale `*.tmp` frame files on startup**
   The atomic frame/DNG write (`writeFileAtomic`) can leave `*.tmp` behind if the
   process is killed mid-write. Add a startup sweep of the output tree, mirroring
   `removeStaleTmp` from the timelapse package.

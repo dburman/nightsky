@@ -110,6 +110,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		"angle", l.cfg.Location.Angle,
 	)
 
+	// Clear partial frame/DNG files left by a writeFileAtomic interrupted by a
+	// previous crash, so they don't accumulate.
+	if n := sweepStaleTmp(l.cfg.Output.Directory); n > 0 {
+		l.logger.Info("removed stale partial-write files", "count", n)
+	}
+
 	// Drain in-flight end-of-night processing before returning; on shutdown
 	// the cancelled context aborts it promptly.
 	defer l.nightEndWg.Wait()
@@ -494,6 +500,36 @@ func failureBackoff(n int) time.Duration {
 		d = 60 * time.Second
 	}
 	return d
+}
+
+// sweepStaleTmp removes leftover ".tmp" files (from an interrupted
+// writeFileAtomic) under outputDir's date directories. Returns the count
+// removed. Best-effort: read/remove errors are ignored.
+func sweepStaleTmp(outputDir string) int {
+	dates, err := os.ReadDir(outputDir)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, d := range dates {
+		if !d.IsDir() {
+			continue
+		}
+		dir := filepath.Join(outputDir, d.Name())
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".tmp") {
+				continue
+			}
+			if os.Remove(filepath.Join(dir, f.Name())) == nil {
+				removed++
+			}
+		}
+	}
+	return removed
 }
 
 // writeFileAtomic writes data to path via a temp file and rename, so the
