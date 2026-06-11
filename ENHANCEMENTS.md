@@ -121,7 +121,7 @@ decoder and is a meaningful dependency decision — confirm scope first.
   - Tests: synthetic raw + dark → expected linear result.
   - **Commit:** `Calibrate dark and flat in linear raw space`
 
-- [ ] **Step 11 — Raw-derived auto-exposure metering**
+- [x] **Step 11 — Raw-derived auto-exposure metering**
   Compute metered brightness from the linear raw instead of the gamma-encoded
   display frame so auto-exposure targets are physically meaningful.
   - Files: `internal/capture/metering.go`, `internal/capture/loop.go`
