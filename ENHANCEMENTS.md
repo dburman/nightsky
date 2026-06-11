@@ -130,6 +130,21 @@ decoder and is a meaningful dependency decision — confirm scope first.
 
 ---
 
+## Remaining integration (Phase 4 follow-up)
+
+Steps 9–11 deliver the `internal/raw` package — DNG decode, linear dark/flat
+calibration, and raw metering — as standalone, unit-tested building blocks. They
+are **not yet wired into the live capture loop**, which still processes the
+8-bit decoded image. Activating raw calibration end-to-end still needs:
+
+- [ ] **Debayer** (CFA → RGB) so calibrated raw can feed overlay/stretch/save.
+- [ ] **Raw master darks/flats** — average the dark/flat DNGs into raw masters
+  (the dark library currently stores RGB PNGs; the DNG sidecars are unused).
+- [ ] **Pipeline switch** — behind a config flag (e.g. `output.raw_calibration`),
+  decode each frame's DNG, subtract dark, divide flat, meter, then debayer.
+- [ ] **Hardware verification** on the Pi against real night frames before
+  making it the default.
+
 ## Suggested execution order
 
 Phases 1 → 2 → 3 are independent and low-risk; do them in order (Steps 1–8),
