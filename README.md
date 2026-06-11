@@ -330,10 +330,13 @@ output:
   timelapse:
     enabled: true
     fps: 25
-    codec: libx264          # or libx265
+    codec: libx264          # libx264, libx265, libsvtav1, or libaom-av1
     crf: 20                 # constant-rate-factor quality (0 = use bitrate instead)
     bitrate: 2000k          # used only when crf: 0
     deflicker: true         # smooth per-frame brightness variation
+    preset: ""              # encoder preset (see codec notes below); "" = default
+    gop: 0                  # max keyframe interval in frames; 0 = encoder default
+    tune: ""                # encoder -tune value (codec-specific); "" = none
     # Iterative mode: encode a video segment every N captured frames during
     # the night, then concatenate segments at dawn without re-encoding.
     # Spreads encoding cost across the night instead of one big job at dawn.
@@ -367,6 +370,18 @@ output:
     quality: 85             # 0–100 lossy quality
     delete_originals: false # remove source PNG after conversion
 ```
+
+#### Choosing a video codec
+
+All-sky timelapses are unusually compressible — large flat dark regions and slow, smooth motion — so the codec and preset matter more than for ordinary video.
+
+- **`libsvtav1` (recommended for archival).** SVT-AV1 gives the smallest files at equal quality and is well-threaded for multi-core encoding. Start with `crf: 32` (range ~30–35; lower = higher quality/larger) and a `preset` of `6`–`8` (lower number = slower and smaller; `4` if you have time to spare on a Pi). AV1's constant-quality mode is wired up automatically (`-b:v 0` alongside `-crf`).
+- **`libx265`.** Smaller than x264 with broad-enough playback support. `crf: 24`–`28`, `preset: slow`.
+- **`libx264` (default, most compatible).** Plays everywhere. `crf: 18`–`23`, `preset: slow`.
+
+A long keyframe interval helps a static-camera timelapse: try `gop: 250` (≈10 s at 25 fps). Encodes run at idle CPU priority (`nice -n 19`) so they don't starve capture.
+
+Note: `deflicker` only smooths brightness *within* a single encode. With `segment_frames > 0` the night is encoded in independent segments and stream-copy concatenated, so brightness steps at segment boundaries are not smoothed — use `segment_frames: 0` when you want full-night deflicker.
 
 ### Upload
 

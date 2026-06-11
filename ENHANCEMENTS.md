@@ -61,7 +61,7 @@ preset is the highest-leverage size win.
   - Tests: arg-builder includes the flags only when set; defaults unchanged.
   - **Commit:** `Expose ffmpeg preset, GOP, and tune for timelapse encoding`
 
-- [ ] **Step 5 — Document AV1/SVT-AV1 as the archival codec**
+- [x] **Step 5 — Document AV1/SVT-AV1 as the archival codec**
   Add `libsvtav1` guidance to the README and example config: recommended CRF
   range (~30–35), preset trade-off, and the existing
   `deflicker` ⇒ `segment_frames: 0` caveat for best-quality runs.
