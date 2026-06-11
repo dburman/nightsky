@@ -432,7 +432,15 @@ func (l *Loop) modeConfig() config.ModeConfig {
 func (l *Loop) initMode() {
 	if l.mode == ModeNight {
 		if l.nightSessionDir == "" {
-			l.nightSessionDir = time.Now().Format("2006-01-02")
+			// Label the session by the date of the most recent dusk, not the
+			// wall clock: a restart after midnight would otherwise start a
+			// second directory for the same night, splitting the timelapse.
+			sessionTime := time.Now()
+			if dusk, ok := astro.MostRecentDusk(sessionTime,
+				l.cfg.Location.Latitude, l.cfg.Location.Longitude, l.cfg.Location.Angle); ok {
+				sessionTime = dusk
+			}
+			l.nightSessionDir = sessionTime.Format("2006-01-02")
 			// Fresh group per session — the previous night's group may still
 			// be drained by its end-of-night goroutine.
 			l.segmentWg = &sync.WaitGroup{}

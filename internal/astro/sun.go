@@ -106,6 +106,26 @@ func IsDaytime(t time.Time, latitude, longitude, angle float64) bool {
 	return !IsNight(t, latitude, longitude, angle)
 }
 
+// MostRecentDusk returns the most recent time at or before t when the sun
+// crossed below the angle threshold (day → night), scanning backward in
+// 5-minute steps for up to 24 hours. ok is false when t is not night or no
+// transition exists within the window (polar day/night).
+func MostRecentDusk(t time.Time, latitude, longitude, angle float64) (dusk time.Time, ok bool) {
+	if !IsNight(t, latitude, longitude, angle) {
+		return time.Time{}, false
+	}
+	const step = 5 * time.Minute
+	cur := t
+	for elapsed := time.Duration(0); elapsed < 24*time.Hour; elapsed += step {
+		prev := cur.Add(-step)
+		if !IsNight(prev, latitude, longitude, angle) {
+			return cur, true // cur is within one step after the crossing
+		}
+		cur = prev
+	}
+	return time.Time{}, false
+}
+
 func timeToJulianDate(t time.Time) float64 {
 	t = t.UTC()
 	y := float64(t.Year())
