@@ -11,6 +11,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Automatic day/night switching** — Built-in NOAA solar position algorithm determines day/night based on your coordinates and a configurable sun altitude angle (civil, nautical, or astronomical twilight)
 - **Auto-exposure** — Logarithmic exposure level algorithm that adjusts exposure and gain to maintain target brightness, with anti-oscillation detection
 - **Dark frame subtraction** — Capture, average, and subtract calibration frames to remove hot pixels and fixed-pattern noise
+- **DNG raw capture** — Optionally save a DNG file alongside each captured image (libcamera only), preserving full sensor bit depth and Bayer pattern for post-processing in Lightroom, darktable, or RawTherapee
 - **Timelapse generation** — Assembles each night's images into an MP4 via ffmpeg with CRF quality mode, optional deflicker filter, and smooth Holy Grail day/night exposure transitions
 - **Keogram** — Single-image summary of the night: center column from each frame stitched left-to-right so clouds, aurora, and milky way transits are visible at a glance
 - **Star trails** — Max-blend stack of all night frames, keeping the brightest pixel seen at each position across the full night
@@ -309,6 +310,7 @@ night:
   skip_frames: 1
   denoise: off
   metering_zone: center   # "full", "center" (zenith), or "top"
+  save_raw: false         # Save a DNG alongside each image (libcamera only)
   cooler_enabled: false   # ZWO TEC cooler
   cooler_target: -10      # Target temperature (°C)
 ```
@@ -332,6 +334,12 @@ output:
     crf: 20                 # constant-rate-factor quality (0 = use bitrate instead)
     bitrate: 2000k          # used only when crf: 0
     deflicker: true         # smooth per-frame brightness variation
+    # Iterative mode: encode a video segment every N captured frames during
+    # the night, then concatenate segments at dawn without re-encoding.
+    # Spreads encoding cost across the night instead of one big job at dawn.
+    # 0 = encode the whole night at once. Note: deflicker only smooths within
+    # a segment, so use segment_frames: 0 for full-night deflicker.
+    segment_frames: 0
 
   # Histogram stretch applied to saved images (does not affect calibration)
   stretch:
@@ -440,6 +448,7 @@ Commands:
   dark        Capture dark frames for calibration
   flat        Capture flat frames for vignetting correction
   analyze     Analyse images and suggest white balance settings
+  process     Run end-of-night processing on a capture directory
   webp        Convert captured PNGs to WebP
   info        Display camera information
   clean       Remove old capture directories
@@ -587,6 +596,18 @@ Suggested: WB Red=61  WB Blue=67
   Apply gradually — one adjustment per night is recommended.
 ```
 
+### `nightsky process`
+
+Runs the full end-of-night processing pipeline on an existing capture directory: timelapse, keogram, star trails, white balance analysis, and WebP conversion. Each output respects its enabled/disabled flag in the config. Useful when the capture loop was stopped before dawn and end-of-night processing never ran, or to regenerate outputs for historical directories.
+
+```bash
+# Most recent capture directory
+nightsky process
+
+# Specific directory
+nightsky process --dir ./output/2026-05-14
+```
+
 ### `nightsky webp`
 
 Converts captured PNG images in a directory to WebP. Requires `cwebp` (`apt-get install webp`). Skips keogram and star-trails files. Defaults to quality and delete-originals settings from your config.
@@ -602,7 +623,7 @@ nightsky webp --dir ./output/2026-05-14
 nightsky webp --dir ./output/2026-05-14 --quality 90 --delete-originals
 ```
 
-This is the manual equivalent of the automatic conversion that runs at end of night when `output.webp.enabled: true`. Useful if the capture loop was stopped before dawn and the end-of-night processing never ran, or to convert historical directories.
+This is the manual equivalent of the automatic conversion that runs at end of night when `output.webp.enabled: true`. To re-run the entire end-of-night pipeline rather than just the WebP step, use `nightsky process`.
 
 ---
 
@@ -612,6 +633,7 @@ This is the manual equivalent of the automatic conversion that runs at end of ni
 output/
 ├── 2026-03-15/             ← named after the night's start date (survives midnight crossings)
 │   ├── allsky-20260315191503.png       ← or .webp if conversion enabled
+│   ├── allsky-20260315191503.dng       ← only when save_raw: true (kept by raw pruning)
 │   ├── allsky-20260315191513.png
 │   ├── ...
 │   ├── timelapse-2026-03-15.mp4
