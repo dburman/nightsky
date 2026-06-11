@@ -29,19 +29,19 @@ location:
 # Day mode settings (sun above angle threshold)
 day:
   exposure: 1ms
-  max_exposure: 2s
+  max_exposure: 6s
   gain: 1.0
   max_gain: 4.0
   auto_exposure: true
   target_brightness: 100
-  delay: 1500s
+  delay: 600s
   binning: 1
-  wb_red: 2.22               # libcamera gain multiplier (0.0–10.0)
-  wb_blue: 1.81
+  wb_red: 2.30               # libcamera gain multiplier (0.0–10.0)
+  wb_blue: 1.40
   awb: true
-  image_type: jpg
+  image_type: png
   quality: 95
-  skip_frames: 5
+  skip_frames: 4
   denoise: cdn_fast
   # Metering zone for auto-exposure: "full", "center", or "top"
   metering_zone: full
@@ -56,14 +56,14 @@ day:
 night:
   exposure: 4s
   max_exposure: 15.5s       # IMX462 maxes out at 15.5x
-  gain: 1.5
+  gain: 2
   max_gain: 10.5            # IMX462 maxes out at 10.5x for analog gain
   auto_exposure: true
   target_brightness: 70     # IMX462 is very sensitive — keep sky background dark
-  delay: 5s
+  delay: 7s
   binning: 1
-  wb_red: 2.22              # libcamera gain multiplier (0.0–10.0); tune with: nightsky analyze
-  wb_blue: 1.81
+  wb_red: 2.30              # libcamera gain multiplier (0.0–10.0); tune with: nightsky analyze
+  wb_blue: 1.40
   awb: false
   image_type: png
   quality: 95
@@ -114,10 +114,10 @@ output:
   # Applies a linear remap of [black_point, white_point] → [0, 255].
   # Does not affect raw scientific data; only changes the saved JPEG/PNG appearance.
   stretch:
-    enabled: true
+    enabled: false
     # "auto" derives black/white points from percentiles of the frame luminance.
     # "manual" uses the black_point / white_point values below.
-    mode: auto
+    mode: manual
     # Auto mode percentiles — tune these to improve star visibility:
     #   auto_black_percentile: higher = sky goes darker = more stars visible.
     #     Dark sites (Bortle 1-3): 10–15. Light-polluted sites: 2–5.
@@ -152,17 +152,17 @@ output:
 
   # End-of-night PNG → WebP conversion (requires: apt-get install webp)
   webp:
-    enabled: true 
+    enabled: true
     # Lossy quality 0–100 (85 is a good balance of size vs. quality)
-    quality: 95 
+    quality: 85
     # Remove the original PNG after successful conversion
-    delete_originals: true 
+    delete_originals: true
 
 upload:
   # Upload each captured image (can be bandwidth-heavy)
   upload_images: false
   # Upload timelapse video at end of night
-  upload_timelapse: false 
+  upload_timelapse: false
 
   s3:
     enabled: false
