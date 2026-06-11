@@ -3,7 +3,12 @@ package capture
 import (
 	"image"
 	"image/color"
+	"image/png"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 // uniformFrame returns a 4x4 RGBA image filled with the given gray value.
@@ -44,6 +49,73 @@ func TestStackFrames_MeanFallbackBelowThree(t *testing.T) {
 	r, _, _, _ := master.At(1, 1).RGBA()
 	if uint8(r>>8) != 20 {
 		t.Errorf("two-frame stack: got %d, want mean 20", uint8(r>>8))
+	}
+}
+
+func writeDark(t *testing.T, dir string, key DarkFrameKey, v uint8) {
+	t.Helper()
+	f, err := os.Create(filepath.Join(dir, key.filename()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, uniformFrame(v)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func darkTestManager(dir string) *DarkFrameManager {
+	return &DarkFrameManager{
+		Dir:    dir,
+		logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+	}
+}
+
+func TestParseDarkFilename(t *testing.T) {
+	key := DarkFrameKey{Exposure: 8000 * time.Millisecond, Gain: 200, Binning: 2}
+	got, ok := parseDarkFilename(key.filename())
+	if !ok {
+		t.Fatalf("failed to parse %q", key.filename())
+	}
+	if got != key {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, key)
+	}
+	if _, ok := parseDarkFilename("allsky-20260315.png"); ok {
+		t.Error("non-dark filename parsed as a dark")
+	}
+}
+
+// SelectDark must pick the nearest available dark in exposure×gain space and
+// match binning exactly.
+func TestSelectDark_NearestMatch(t *testing.T) {
+	dir := t.TempDir()
+	writeDark(t, dir, DarkFrameKey{Exposure: 2000 * time.Millisecond, Gain: 200, Binning: 1}, 5)
+	writeDark(t, dir, DarkFrameKey{Exposure: 8000 * time.Millisecond, Gain: 200, Binning: 1}, 20)
+	dm := darkTestManager(dir)
+
+	// Actual frame at 7s/gain200 is closest to the 8s dark (value 20).
+	got := dm.SelectDark(DarkFrameKey{Exposure: 7000 * time.Millisecond, Gain: 200, Binning: 1})
+	if got == nil {
+		t.Fatal("expected a dark within tolerance")
+	}
+	if r, _, _, _ := got.At(0, 0).RGBA(); uint8(r>>8) != 20 {
+		t.Errorf("selected wrong dark: pixel %d, want 20 (the 8s dark)", uint8(r>>8))
+	}
+}
+
+// No dark within one stop, and binning mismatch, must both yield nil.
+func TestSelectDark_OutOfToleranceAndBinning(t *testing.T) {
+	dir := t.TempDir()
+	writeDark(t, dir, DarkFrameKey{Exposure: 1000 * time.Millisecond, Gain: 100, Binning: 1}, 5)
+	dm := darkTestManager(dir)
+
+	// 15.5s/gain400 is many stops from the only 1s/gain100 dark.
+	if got := dm.SelectDark(DarkFrameKey{Exposure: 15500 * time.Millisecond, Gain: 400, Binning: 1}); got != nil {
+		t.Error("expected nil when no dark is within tolerance")
+	}
+	// Exact level but wrong binning.
+	if got := dm.SelectDark(DarkFrameKey{Exposure: 1000 * time.Millisecond, Gain: 100, Binning: 2}); got != nil {
+		t.Error("expected nil when only a different-binning dark exists")
 	}
 }
 

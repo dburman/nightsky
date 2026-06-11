@@ -50,7 +50,6 @@ type Loop struct {
 	nightSessionDir string // set when night begins, cleared at dawn
 	exposureCtrl    *ExposureController
 	darkMgr         *DarkFrameManager
-	currentDark     image.Image
 	flatMgr         *flat.Manager
 	frameCount      int64
 	skipRemaining   int
@@ -251,10 +250,19 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Dark frame subtraction.
+		// Dark frame subtraction. Select the dark matching this frame's
+		// actual exposure/gain (which drift under auto-exposure), not the
+		// mode's configured base.
 		processedImg := result.Image
-		if l.currentDark != nil {
-			processedImg = SubtractDark(processedImg, l.currentDark)
+		if l.darkMgr != nil {
+			dark := l.darkMgr.SelectDark(DarkFrameKey{
+				Exposure: result.Meta.Exposure,
+				Gain:     result.Meta.Gain,
+				Binning:  modeCfg.Binning,
+			})
+			if dark != nil {
+				processedImg = SubtractDark(processedImg, dark)
+			}
 		}
 
 		// Flat field correction.
@@ -477,18 +485,8 @@ func (l *Loop) initMode() {
 
 	l.skipRemaining = modeCfg.SkipFrames
 
-	// Load dark frame for this mode's settings.
-	if l.darkMgr != nil {
-		key := DarkFrameKey{
-			Exposure: modeCfg.Exposure,
-			Gain:     modeCfg.Gain,
-			Binning:  modeCfg.Binning,
-		}
-		l.currentDark = l.darkMgr.LoadDark(key)
-		if l.currentDark != nil {
-			l.logger.Info("loaded dark frame for mode", "mode", l.mode)
-		}
-	}
+	// Dark frames are now selected per-frame against actual settings in the
+	// capture loop (see SelectDark), not loaded once per mode.
 }
 
 // failureBackoff returns the retry delay after n consecutive capture

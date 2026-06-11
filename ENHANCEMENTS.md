@@ -24,7 +24,7 @@ scales with exposure and gain, so most of the night subtracts the wrong dark.
   - Tests: synthetic frames with one outlier pixel → median rejects it.
   - **Commit:** `Median-stack dark frames to reject outlier pixels`
 
-- [ ] **Step 2 — Match darks to actual capture settings, not config base**
+- [x] **Step 2 — Match darks to actual capture settings, not config base**
   Load/select the dark using `result.Meta.Exposure` / `result.Meta.Gain`
   (the values libcamera actually used) rather than the configured base. When no
   close match exists, log a warning and skip subtraction instead of silently

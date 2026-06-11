@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/draw"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -27,6 +28,11 @@ type DarkFrameManager struct {
 
 	cam    camera.Camera
 	logger *slog.Logger
+
+	// cache holds decoded master darks by filename so per-frame selection
+	// doesn't re-read and re-decode from disk every capture.
+	cache        map[string]image.Image
+	lastSelected string // filename of the most recently selected dark, for log de-dup
 }
 
 // NewDarkFrameManager creates a new dark frame manager.
@@ -117,12 +123,79 @@ func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.Ca
 	return nil
 }
 
-// LoadDark loads a previously captured dark frame matching the given parameters.
-// Returns nil if no matching dark frame exists.
+// LoadDark loads a previously captured dark frame matching the given parameters
+// exactly. Returns nil if no matching dark frame exists.
 func (dm *DarkFrameManager) LoadDark(key DarkFrameKey) image.Image {
-	path := filepath.Join(dm.Dir, key.filename())
+	return dm.load(key.filename())
+}
 
-	f, err := os.Open(path)
+// darkMatchTolerance is the maximum exposure-level distance (in stops, where
+// level = log2(exposureUs × gain)) between a frame's actual settings and an
+// available dark for that dark to be considered a usable match. One stop keeps
+// dark-current scaling error small while tolerating the auto-exposure grid.
+const darkMatchTolerance = 1.0
+
+// SelectDark returns the available master dark whose capture settings are
+// closest to the actual settings of the frame being calibrated. Binning must
+// match exactly; exposure and gain are matched in log2(exposureUs × gain)
+// space, since dark current scales with both. Returns nil (and logs once) when
+// no dark is within darkMatchTolerance, so a mismatched dark is never
+// subtracted silently.
+func (dm *DarkFrameManager) SelectDark(actual DarkFrameKey) image.Image {
+	entries, err := os.ReadDir(dm.Dir)
+	if err != nil {
+		return nil
+	}
+
+	want := exposureLevelOf(actual)
+	var bestKey DarkFrameKey
+	var bestFile string
+	bestDist := -1.0
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		key, ok := parseDarkFilename(e.Name())
+		if !ok || key.Binning != actual.Binning {
+			continue
+		}
+		dist := math.Abs(exposureLevelOf(key) - want)
+		if bestDist < 0 || dist < bestDist {
+			bestDist, bestKey, bestFile = dist, key, e.Name()
+		}
+	}
+
+	if bestFile == "" || bestDist > darkMatchTolerance {
+		if dm.lastSelected != "" {
+			dm.logger.Warn("no dark frame within tolerance for current settings; skipping subtraction",
+				"exposure", actual.Exposure, "gain", actual.Gain, "binning", actual.Binning)
+			dm.lastSelected = ""
+		}
+		return nil
+	}
+
+	if bestFile != dm.lastSelected {
+		dm.logger.Info("selected dark frame",
+			"file", bestFile,
+			"dark_exposure", bestKey.Exposure, "dark_gain", bestKey.Gain,
+			"frame_exposure", actual.Exposure, "frame_gain", actual.Gain,
+			"distance_stops", bestDist)
+		dm.lastSelected = bestFile
+	}
+	return dm.load(bestFile)
+}
+
+// load reads and decodes a master dark by filename, caching the result.
+func (dm *DarkFrameManager) load(name string) image.Image {
+	if dm.cache == nil {
+		dm.cache = make(map[string]image.Image)
+	}
+	if img, ok := dm.cache[name]; ok {
+		return img
+	}
+
+	f, err := os.Open(filepath.Join(dm.Dir, name))
 	if err != nil {
 		return nil
 	}
@@ -130,12 +203,39 @@ func (dm *DarkFrameManager) LoadDark(key DarkFrameKey) image.Image {
 
 	img, _, err := image.Decode(f)
 	if err != nil {
-		dm.logger.Warn("failed to decode dark frame", "path", path, "error", err)
+		dm.logger.Warn("failed to decode dark frame", "file", name, "error", err)
 		return nil
 	}
-
-	dm.logger.Debug("loaded dark frame", "path", path)
+	dm.cache[name] = img
 	return img
+}
+
+// exposureLevelOf returns log2(exposureUs × gain) for a dark key, the unified
+// scale used to match darks to frames. Inputs are floored to 1 to stay finite.
+func exposureLevelOf(k DarkFrameKey) float64 {
+	us := float64(k.Exposure.Microseconds())
+	if us < 1 {
+		us = 1
+	}
+	g := k.Gain
+	if g < 1 {
+		g = 1
+	}
+	return math.Log2(us * g)
+}
+
+// parseDarkFilename reverses DarkFrameKey.filename, recovering the key from a
+// "dark_<ms>ms_gain<g>_bin<n>.png" name. ok is false for non-matching names.
+func parseDarkFilename(name string) (DarkFrameKey, bool) {
+	var ms, gain, bin int
+	if n, err := fmt.Sscanf(name, "dark_%dms_gain%d_bin%d.png", &ms, &gain, &bin); n != 3 || err != nil {
+		return DarkFrameKey{}, false
+	}
+	return DarkFrameKey{
+		Exposure: time.Duration(ms) * time.Millisecond,
+		Gain:     float64(gain),
+		Binning:  bin,
+	}, true
 }
 
 // SubtractDark subtracts a dark frame from a light frame pixel by pixel.
