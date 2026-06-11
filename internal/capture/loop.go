@@ -57,9 +57,15 @@ type Loop struct {
 	failureStreak   int // consecutive capture failures, for backoff and reinit
 	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
 
-	// Iterative timelapse state (used when SegmentFrames > 0).
+	// Iterative timelapse state (used when SegmentFrames > 0). segmentWg is
+	// per night session — end-of-night processing waits on the finished
+	// night's group while a new session gets a fresh one.
 	nightFrameCount int
-	segmentWg       sync.WaitGroup
+	segmentWg       *sync.WaitGroup
+
+	// nightEndWg tracks in-flight end-of-night processing goroutines so Run
+	// drains them before returning.
+	nightEndWg sync.WaitGroup
 
 	// thumbSem bounds concurrent thumbnail encodes; when full, the thumbnail
 	// is skipped and the web server generates it on demand instead.
@@ -73,10 +79,11 @@ type Loop struct {
 // NewLoop creates a new capture loop.
 func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 	l := &Loop{
-		cam:      cam,
-		cfg:      cfg,
-		logger:   logger,
-		thumbSem: make(chan struct{}, 2),
+		cam:       cam,
+		cfg:       cfg,
+		logger:    logger,
+		thumbSem:  make(chan struct{}, 2),
+		segmentWg: &sync.WaitGroup{},
 	}
 
 	// Initialize dark frame manager if enabled.
@@ -104,6 +111,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		"angle", l.cfg.Location.Angle,
 	)
 
+	// Drain in-flight end-of-night processing before returning; on shutdown
+	// the cancelled context aborts it promptly.
+	defer l.nightEndWg.Wait()
+
 	// Determine initial mode.
 	l.mode = l.currentMode()
 	l.logger.Info("initial mode", "mode", l.mode)
@@ -122,28 +133,39 @@ func (l *Loop) Run(ctx context.Context) error {
 		if newMode != l.mode {
 			l.logger.Info("mode transition", "from", l.mode, "to", newMode)
 
-			// End-of-night processing: fire before clearing nightSessionDir.
+			// End-of-night processing runs in the background so day capture
+			// starts immediately instead of stalling behind timelapse
+			// encoding (encodes are niced, so they yield CPU to capture).
+			// The goroutine owns the finished night's metrics and segment
+			// WaitGroup; initMode gives the next session fresh ones.
 			if l.mode == ModeNight && newMode == ModeDay {
-				nightDir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
 				if l.nightSessionDir != "" {
-					// Flush cloud metrics before handing off to OnNightEnd.
-					if len(l.cloudMetrics) > 0 {
-						if err := cloud.WriteReport(nightDir, l.cloudMetrics); err != nil {
-							l.logger.Error("cloud report write failed", "error", err)
-						} else {
-							l.logger.Info("cloud coverage report written",
-								"dir", nightDir,
-								"frames", len(l.cloudMetrics),
-								"summary", cloud.SummaryLine(l.cloudMetrics),
-							)
+					nightDir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
+					nightMetrics := l.cloudMetrics
+					segWg := l.segmentWg
+					l.cloudMetrics = nil
+
+					l.nightEndWg.Add(1)
+					go func() {
+						defer l.nightEndWg.Done()
+						// Flush cloud metrics before handing off to OnNightEnd.
+						if len(nightMetrics) > 0 {
+							if err := cloud.WriteReport(nightDir, nightMetrics); err != nil {
+								l.logger.Error("cloud report write failed", "error", err)
+							} else {
+								l.logger.Info("cloud coverage report written",
+									"dir", nightDir,
+									"frames", len(nightMetrics),
+									"summary", cloud.SummaryLine(nightMetrics),
+								)
+							}
 						}
-						l.cloudMetrics = nil
-					}
-					// Drain any in-flight segment encodes before finalizing.
-					l.segmentWg.Wait()
-					if l.OnNightEnd != nil {
-						l.OnNightEnd(nightDir)
-					}
+						// Drain any in-flight segment encodes before finalizing.
+						segWg.Wait()
+						if l.OnNightEnd != nil {
+							l.OnNightEnd(nightDir)
+						}
+					}()
 				}
 				l.nightSessionDir = ""
 			}
@@ -342,9 +364,10 @@ func (l *Loop) Run(ctx context.Context) error {
 						CRF:       l.cfg.Output.Timelapse.CRF,
 						Deflicker: l.cfg.Output.Timelapse.Deflicker,
 					}
-					l.segmentWg.Add(1)
+					segWg := l.segmentWg
+					segWg.Add(1)
 					go func(idx int) {
-						defer l.segmentWg.Done()
+						defer segWg.Done()
 						if _, err := timelapse.GenerateSegment(ctx, dir, idx, sf, tlCfg, l.logger); err != nil {
 							l.logger.Error("timelapse segment failed", "segment", idx, "error", err)
 						}
@@ -410,6 +433,9 @@ func (l *Loop) initMode() {
 	if l.mode == ModeNight {
 		if l.nightSessionDir == "" {
 			l.nightSessionDir = time.Now().Format("2006-01-02")
+			// Fresh group per session — the previous night's group may still
+			// be drained by its end-of-night goroutine.
+			l.segmentWg = &sync.WaitGroup{}
 		}
 		l.nightFrameCount = 0
 	}
