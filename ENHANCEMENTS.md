@@ -137,7 +137,7 @@ calibration, and raw metering — as standalone, unit-tested building blocks. Th
 are **not yet wired into the live capture loop**, which still processes the
 8-bit decoded image. Activating raw calibration end-to-end still needs:
 
-- [ ] **Debayer** (CFA → RGB) so calibrated raw can feed overlay/stretch/save.
+- [x] **Debayer** (CFA → RGB) so calibrated raw can feed overlay/stretch/save.
 - [ ] **Raw master darks/flats** — average the dark/flat DNGs into raw masters
   (the dark library currently stores RGB PNGs; the DNG sidecars are unused).
 - [ ] **Pipeline switch** — behind a config flag (e.g. `output.raw_calibration`),
