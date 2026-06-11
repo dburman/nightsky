@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/dburman/nightsky/internal/camera"
@@ -98,12 +99,12 @@ func (dm *DarkFrameManager) CaptureDarks(ctx context.Context, settings camera.Ca
 		}
 	}
 
-	// Average all dark frames.
-	averaged := averageFrames(frames)
+	// Stack all dark frames into the master dark.
+	master := stackFrames(frames)
 
 	// Save the master dark frame.
 	path := filepath.Join(dm.Dir, key.filename())
-	data, err := imgutil.EncodeImage(averaged, "png", 95)
+	data, err := imgutil.EncodeImage(master, "png", 95)
 	if err != nil {
 		return fmt.Errorf("encode dark frame: %w", err)
 	}
@@ -177,6 +178,52 @@ func clampSub(a, b uint32) uint32 {
 		return a - b
 	}
 	return 0
+}
+
+// stackFrames combines dark frames into a master dark. With three or more
+// frames a per-pixel median is used: a mean lets a single bright outlier
+// (satellite, plane, cosmic-ray hit) in any one dark contaminate the master,
+// while a median rejects it. Fewer than three frames fall back to a mean.
+func stackFrames(frames []image.Image) image.Image {
+	if len(frames) >= 3 {
+		return medianFrames(frames)
+	}
+	return averageFrames(frames)
+}
+
+// medianFrames computes the pixel-wise per-channel median of multiple frames.
+func medianFrames(frames []image.Image) image.Image {
+	bounds := frames[0].Bounds()
+	n := len(frames)
+
+	rs := make([]uint8, n)
+	gs := make([]uint8, n)
+	bs := make([]uint8, n)
+
+	result := image.NewRGBA(bounds)
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			for i, f := range frames {
+				r, g, b, _ := f.At(x, y).RGBA()
+				rs[i] = uint8(r >> 8)
+				gs[i] = uint8(g >> 8)
+				bs[i] = uint8(b >> 8)
+			}
+			result.SetRGBA(x, y, color.RGBA{
+				R: medianU8(rs),
+				G: medianU8(gs),
+				B: medianU8(bs),
+				A: 255,
+			})
+		}
+	}
+	return result
+}
+
+// medianU8 returns the median of vals, sorting in place.
+func medianU8(vals []uint8) uint8 {
+	slices.Sort(vals)
+	return vals[len(vals)/2]
 }
 
 // averageFrames computes the pixel-wise average of multiple frames.

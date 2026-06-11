@@ -16,7 +16,7 @@ darks are keyed by the *configured base* exposure/gain and loaded once per mode
 transition, so they only match the first frame of the night. Dark current
 scales with exposure and gain, so most of the night subtracts the wrong dark.
 
-- [ ] **Step 1 — Median-stack dark frames instead of mean**
+- [x] **Step 1 — Median-stack dark frames instead of mean**
   `averageFrames` in `internal/capture/darkframe.go` uses a pixel-wise mean, so
   a single satellite/plane/cosmic-ray hit in any dark contaminates the master.
   Replace with a per-pixel median (keep mean as a fallback for count < 3).
