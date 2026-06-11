@@ -19,6 +19,7 @@ import (
 	"github.com/dburman/nightsky/internal/flat"
 	imgutil "github.com/dburman/nightsky/internal/image"
 	"github.com/dburman/nightsky/internal/metrics"
+	"github.com/dburman/nightsky/internal/raw"
 	"github.com/dburman/nightsky/internal/timelapse"
 )
 
@@ -53,7 +54,8 @@ type Loop struct {
 	flatMgr         *flat.Manager
 	frameCount      int64
 	skipRemaining   int
-	failureStreak   int // consecutive capture failures, for backoff and reinit
+	failureStreak   int  // consecutive capture failures, for backoff and reinit
+	rawWarned       bool // de-dups raw-calibration fallback warnings
 	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
 
 	// Iterative timelapse state (used when SegmentFrames > 0). segmentWg is
@@ -243,8 +245,30 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		l.frameCount++
 
-		// Compute metered brightness for auto-exposure using the configured zone.
-		meteredMean := ZoneMean(result.Image, modeCfg.MeteringZone)
+		// Experimental raw pipeline (opt-in via output.raw_calibration; the
+		// flag guard keeps every raw code path inert when disabled). On
+		// success the frame image and metered mean both come from the linear
+		// raw data; any failure falls back to the standard processed image.
+		processedImg := result.Image
+		var meteredMean float64
+		rawCalibrated := false
+		if l.cfg.Output.RawCalibration && len(result.DNGData) > 0 {
+			img, mean, err := l.calibrateRaw(result, modeCfg)
+			if err != nil {
+				if !l.rawWarned {
+					l.logger.Warn("raw calibration failed; using standard processed image", "error", err)
+					l.rawWarned = true
+				}
+			} else {
+				processedImg, meteredMean = img, mean
+				rawCalibrated = true
+				l.rawWarned = false
+			}
+		}
+		if !rawCalibrated {
+			// Metered brightness for auto-exposure from the processed image.
+			meteredMean = ZoneMean(result.Image, modeCfg.MeteringZone)
+		}
 
 		// Skip frames after mode transition.
 		if l.skipRemaining > 0 {
@@ -256,11 +280,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 
-		// Dark frame subtraction. Select the dark matching this frame's
-		// actual exposure/gain (which drift under auto-exposure), not the
-		// mode's configured base.
-		processedImg := result.Image
-		if l.darkMgr != nil {
+		// Dark frame subtraction (8-bit path). Select the dark matching this
+		// frame's actual exposure/gain (which drift under auto-exposure), not
+		// the mode's configured base. Skipped when the raw pipeline already
+		// subtracted a linear master dark.
+		if !rawCalibrated && l.darkMgr != nil {
 			dark := l.darkMgr.SelectDark(DarkFrameKey{
 				Exposure: result.Meta.Exposure,
 				Gain:     result.Meta.Gain,
@@ -487,6 +511,43 @@ func (l *Loop) initMode() {
 
 	// Dark frames are now selected per-frame against actual settings in the
 	// capture loop (see SelectDark), not loaded once per mode.
+}
+
+// calibrateRaw runs the linear-raw pipeline on a frame's DNG: decode,
+// subtract the nearest raw master dark (if any), meter brightness from the
+// linear data, then debayer with the mode's WB gains and display gamma.
+// Returns the RGB image and the linear metered mean.
+//
+// Note: the linear mean reads darker than the gamma-display mean for the same
+// scene, so target_brightness needs retuning when raw calibration is enabled.
+// When AWB is on, libcamera's dynamic gains are not in the DNG; the configured
+// wb_red/wb_blue are used instead.
+func (l *Loop) calibrateRaw(result *camera.CaptureResult, modeCfg config.ModeConfig) (image.Image, float64, error) {
+	rimg, err := raw.DecodeDNG(result.DNGData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("decode DNG: %w", err)
+	}
+
+	if l.darkMgr != nil {
+		dark := l.darkMgr.SelectRawDark(DarkFrameKey{
+			Exposure: result.Meta.Exposure,
+			Gain:     result.Meta.Gain,
+			Binning:  modeCfg.Binning,
+		})
+		if dark != nil {
+			if err := rimg.SubtractDark(dark); err != nil {
+				l.logger.Warn("raw dark subtraction skipped", "error", err)
+			}
+		}
+	}
+
+	mean := rimg.MeanBrightness(modeCfg.MeteringZone)
+	rgb := rimg.Debayer(raw.DebayerOptions{
+		WBRed:  modeCfg.WBRed,
+		WBBlue: modeCfg.WBBlue,
+		Gamma:  2.2,
+	})
+	return rgb, mean, nil
 }
 
 // failureBackoff returns the retry delay after n consecutive capture

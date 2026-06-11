@@ -110,6 +110,14 @@ output:
   overlay: true
   overlay_font_size: 24
 
+  # EXPERIMENTAL: process each frame from its linear DNG (decode, subtract a
+  # raw master dark, meter, debayer) instead of the 8-bit ISP output. Requires
+  # save_raw: true in the active mode (libcamera only); falls back to the
+  # standard image on any per-frame error. Linear metering reads darker than
+  # the display mean — retune target_brightness when enabling. Default false:
+  # when off, none of the raw pipeline code runs.
+  raw_calibration: false
+
   # Histogram stretch — increases contrast on faint night-sky images.
   # Applies a linear remap of [black_point, white_point] → [0, 255].
   # Does not affect raw scientific data; only changes the saved JPEG/PNG appearance.

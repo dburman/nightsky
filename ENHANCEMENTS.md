@@ -142,8 +142,10 @@ are **not yet wired into the live capture loop**, which still processes the
   Gray16 masters (`darkraw_*.png`) selected per-frame by `SelectRawDark`.
   Raw master *flats* are deferred — the flat capture path doesn't save DNGs
   yet; the existing RGB flat still applies after debayer.
-- [ ] **Pipeline switch** — behind a config flag (e.g. `output.raw_calibration`),
-  decode each frame's DNG, subtract dark, divide flat, meter, then debayer.
+- [x] **Pipeline switch** — `output.raw_calibration` (default **false**; the
+  flag guards every raw code path, so the standard pipeline is untouched when
+  off). When on: decode DNG → subtract raw master dark → meter linear → debayer
+  with WB gains + gamma; any per-frame error falls back to the 8-bit image.
 - [ ] **Hardware verification** on the Pi against real night frames before
   making it the default.
 

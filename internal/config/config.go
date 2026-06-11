@@ -111,6 +111,14 @@ type OutputConfig struct {
 	// trails, WB analysis). 0 = disabled. Runs independently of DaysToKeep /
 	// MinFreeGB — use together to retain summaries longer than raw frames.
 	PruneRawAfterDays int `mapstructure:"prune_raw_after_days" json:"prune_raw_after_days"`
+	// RawCalibration enables the experimental linear-raw processing pipeline:
+	// each frame's DNG is decoded, dark-subtracted against a raw master
+	// (darkraw_*.png), metered, and debayered in linear space before the
+	// usual flat/stretch/overlay steps. Requires save_raw in the active mode
+	// (libcamera only). On any per-frame error the loop falls back to the
+	// standard 8-bit processed image. Default false — when off, none of the
+	// raw pipeline code runs.
+	RawCalibration bool `mapstructure:"raw_calibration" json:"raw_calibration"`
 	// Overlay enables timestamp/metadata text on images.
 	Overlay bool `mapstructure:"overlay"          json:"overlay"`
 	// OverlayFontSize in points (default 24).
@@ -338,6 +346,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("output.directory", "./output")
 	v.SetDefault("output.filename_prefix", "allsky")
+	v.SetDefault("output.raw_calibration", false)
 	v.SetDefault("output.days_to_keep", 0)
 	v.SetDefault("output.min_free_gb", 0.0)
 	v.SetDefault("output.prune_raw_after_days", 0)

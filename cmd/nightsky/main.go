@@ -113,6 +113,19 @@ func captureCmd() *cobra.Command {
 					"set segment_frames: 0 for full-night deflicker")
 			}
 
+			// Raw calibration preconditions — warn rather than fail so a shared
+			// config can enable it for the libcamera host only.
+			if cfg.Output.RawCalibration {
+				if cfg.Camera.Type != "libcamera" {
+					logger.Warn("output.raw_calibration requires DNG capture, which only the libcamera backend provides; " +
+						"the raw pipeline will never run with camera.type=" + cfg.Camera.Type)
+				}
+				if !cfg.Night.SaveRaw && !cfg.Day.SaveRaw {
+					logger.Warn("output.raw_calibration is enabled but save_raw is off in both modes; " +
+						"the raw pipeline will never run — set night.save_raw: true")
+				}
+			}
+
 			// GPS auto-location: fetch a fix from gpsd and override config lat/lon.
 			if cfg.Location.GPS {
 				gpsCtx, gpsCancel := context.WithTimeout(context.Background(), 30*time.Second)

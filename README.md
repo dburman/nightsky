@@ -364,12 +364,29 @@ output:
   # Combine with days_to_keep to remove entire directories after even longer.
   prune_raw_after_days: 0
 
+  # EXPERIMENTAL: process each frame from its linear DNG instead of the 8-bit
+  # ISP output (see "Raw calibration pipeline" below). Default off — when
+  # false, none of the raw pipeline code runs.
+  raw_calibration: false
+
   # Requires: apt-get install webp
   webp:
     enabled: false
     quality: 85             # 0–100 lossy quality
     delete_originals: false # remove source PNG after conversion
 ```
+
+#### Raw calibration pipeline (experimental)
+
+With `output.raw_calibration: true`, frames are processed from the **linear 12-bit DNG** rather than the gamma-encoded 8-bit ISP output: the DNG is decoded, the nearest linear master dark (`darkraw_*.png`, produced by `nightsky dark` from DNG sidecars) is subtracted, auto-exposure is metered from the linear data, and the frame is debayered with the mode's `wb_red`/`wb_blue` gains and gamma 2.2. Flat-field correction, stretch, and overlay then apply as usual.
+
+Calibrating in linear space is where dark subtraction is physically valid — hot pixels and dark current subtract exactly instead of approximately on gamma-encoded pixels. Caveats:
+
+- Requires `save_raw: true` in the active mode and the `libcamera` backend (DNG capture). The capture command warns at startup if these don't hold.
+- **Strictly opt-in and fail-safe**: when the flag is off none of the raw code runs; when on, any per-frame error (missing DNG, decode failure) falls back to the standard 8-bit image with a warning.
+- The linear metered mean reads darker than the display-image mean for the same scene — retune `target_brightness` when enabling.
+- With `awb: true`, libcamera's dynamic gains aren't recorded in the DNG, so the configured `wb_red`/`wb_blue` are used; no colour-correction matrix is applied, so colours approximate the ISP output.
+- Raw master *flats* are not yet supported; the RGB flat applies after debayer.
 
 #### Choosing a video codec
 
