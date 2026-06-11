@@ -114,7 +114,7 @@ decoder and is a meaningful dependency decision — confirm scope first.
   - Tests: decode a sample DNG; dimensions/bit-depth correct.
   - **Commit:** `Add DNG raw decode to linear sensor data`
 
-- [ ] **Step 10 — Dark-subtract and flat-divide in raw space**
+- [x] **Step 10 — Dark-subtract and flat-divide in raw space**
   Apply calibration on the linear raw before debayer/stretch, where the linear
   subtraction model holds and 12-bit headroom is preserved.
   - Files: `internal/raw/`, `internal/capture/loop.go`
