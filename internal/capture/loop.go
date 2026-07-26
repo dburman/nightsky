@@ -31,6 +31,11 @@ const (
 	ModeNight
 )
 
+// diskCheckInterval is how many frames pass between mid-session free-space
+// checks. At typical night cadence (~5-15s/frame) this checks every few
+// minutes — fast enough to react before a nearly-full card runs out.
+const diskCheckInterval = 50
+
 func (m Mode) String() string {
 	if m == ModeDay {
 		return "day"
@@ -431,6 +436,20 @@ func (l *Loop) Run(ctx context.Context) error {
 		}
 		if err := metrics.Write(l.cfg.Output.Directory, snap); err != nil {
 			l.logger.Debug("metrics write failed", "error", err)
+		}
+
+		// Mid-session disk guard: end-of-night cleanup alone lets a long
+		// night fill the card mid-session, and a full filesystem takes the
+		// whole system down with it. Reuses the space-based cleanup with the
+		// active night session protected.
+		if l.cfg.Output.MinFreeGB > 0 && l.frameCount%diskCheckInterval == 0 {
+			if free, err := DiskFreeGB(l.cfg.Output.Directory); err == nil && free < l.cfg.Output.MinFreeGB {
+				l.logger.Warn("disk space low mid-session, removing oldest captures",
+					"free_gb", free, "min_free_gb", l.cfg.Output.MinFreeGB)
+				if err := CleanForSpace(l.cfg.Output.Directory, l.cfg.Output.MinFreeGB, l.nightSessionDir, l.logger); err != nil {
+					l.logger.Error("mid-session cleanup failed", "error", err)
+				}
+			}
 		}
 
 		// Delay between captures.
