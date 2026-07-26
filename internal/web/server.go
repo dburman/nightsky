@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dburman/nightsky/internal/config"
 	imgutil "github.com/dburman/nightsky/internal/image"
@@ -29,15 +30,26 @@ type Server struct {
 	cfg    *config.Config
 	addr   string
 	logger *slog.Logger
+
+	// thumbSem bounds concurrent on-demand thumbnail decodes. A cache-miss
+	// decode holds a full-resolution frame in memory; without a bound, one
+	// phone scrolling the gallery can trigger several simultaneous decodes
+	// while capture and an encode are running on a low-memory board.
+	thumbSem chan struct{}
 }
 
 // New creates a new Server.
 func New(cfg *config.Config, addr string, logger *slog.Logger) *Server {
-	return &Server{cfg: cfg, addr: addr, logger: logger}
+	return &Server{
+		cfg:      cfg,
+		addr:     addr,
+		logger:   logger,
+		thumbSem: make(chan struct{}, 2),
+	}
 }
 
-// ListenAndServe registers routes and starts the HTTP server.
-func (s *Server) ListenAndServe() error {
+// routes builds the request mux (separated from ListenAndServe for tests).
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.handleIndex)
 	mux.HandleFunc("GET /api/status", s.handleStatus)
@@ -47,8 +59,24 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/captures/{date}/images", s.handleDateImages)
 	mux.HandleFunc("GET /latest", s.handleLatest)
 	mux.HandleFunc("GET /output/{path...}", s.handleOutput)
+	return mux
+}
+
+// ListenAndServe registers routes and starts the HTTP server. The server sets
+// explicit timeouts so dead or dawdling connections (flaky WiFi, Slowloris)
+// can't accumulate file descriptors over weeks of uptime. WriteTimeout stays
+// generous because timelapse MP4s are streamed over slow links.
+func (s *Server) ListenAndServe() error {
+	srv := &http.Server{
+		Addr:              s.addr,
+		Handler:           s.routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      15 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
 	s.logger.Info("web UI started", "url", "http://localhost"+s.addr)
-	return http.ListenAndServe(s.addr, mux)
+	return srv.ListenAndServe()
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -317,6 +345,11 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 		w.Write(data)
 		return
 	}
+
+	// Cache miss: decoding holds a full-resolution frame in memory, so bound
+	// how many run at once (excess requests queue briefly).
+	s.thumbSem <- struct{}{}
+	defer func() { <-s.thumbSem }()
 
 	// Open and decode source image.
 	f, err := os.Open(absPath)
