@@ -700,6 +700,7 @@ function renderConfig(cfg) {
       ['Skip Frames',       esc(m.skip_frames)],
       ['Denoise',           `<span class="mono">${esc(m.denoise)}</span>`],
       ['Metering Zone',     `<span class="badge blue">${esc(m.metering_zone || 'full')}</span>`],
+      ['Save Raw (DNG)',    badge(m.save_raw)],
       ['Cooler',            badge(m.cooler_enabled)],
       ['Cooler Target',     m.cooler_enabled ? esc(m.cooler_target) + ' °C' : '—'],
     ]);
@@ -755,6 +756,9 @@ function renderConfig(cfg) {
           ['Overlay',          badge(out.overlay)],
           ['Overlay Font',     esc(out.overlay_font_size) + 'pt'],
           ['Prune Raw After',  out.prune_raw_after_days > 0 ? esc(out.prune_raw_after_days) + ' days' : '—'],
+          ['Metrics Dir',      out.metrics_dir ? `<span class="mono">${esc(out.metrics_dir)}</span>` : '— (output dir)'],
+          ['Raw Calibration',  badge(out.raw_calibration, 'on', 'off')],
+          ['Memory Limit',     cfg.memory_limit_mb > 0 ? esc(cfg.memory_limit_mb) + ' MB' : '—'],
         ])}
       </div>
 
@@ -765,7 +769,20 @@ function renderConfig(cfg) {
           ['FPS',       esc(tl.fps)],
           ['Codec',     `<span class="mono">${esc(tl.codec)}</span>`],
           ['Quality',   tl.crf > 0 ? `CRF ${esc(tl.crf)}` : `<span class="mono">${esc(tl.bitrate)}</span>`],
+          ['Preset',    tl.preset ? `<span class="mono">${esc(tl.preset)}</span>` : '—'],
+          ['Tune',      tl.tune ? `<span class="mono">${esc(tl.tune)}</span>` : '—'],
+          ['GOP',       tl.gop > 0 ? esc(tl.gop) + ' frames' : '—'],
+          ['Threads',   tl.threads > 0 ? esc(tl.threads) : '—'],
+          ['Segments',  tl.segment_frames > 0 ? `every ${esc(tl.segment_frames)} frames` : 'end of night'],
           ['Deflicker', badge(tl.deflicker)],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Keogram &amp; Star Trails</div>
+        ${kv([
+          ['Keogram',     badge(cfg.output.keogram.enabled)],
+          ['Star Trails', badge(cfg.output.startrails.enabled)],
         ])}
       </div>
 
