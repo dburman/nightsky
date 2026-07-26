@@ -19,6 +19,7 @@ import (
 	"github.com/dburman/nightsky/internal/flat"
 	"github.com/dburman/nightsky/internal/gps"
 	"github.com/dburman/nightsky/internal/keogram"
+	"github.com/dburman/nightsky/internal/sdnotify"
 	"github.com/dburman/nightsky/internal/startrails"
 	"github.com/dburman/nightsky/internal/timelapse"
 	"github.com/dburman/nightsky/internal/upload"
@@ -273,8 +274,14 @@ func captureCmd() *cobra.Command {
 			go func() {
 				sig := <-sigChan
 				logger.Info("received signal, shutting down", "signal", sig)
+				sdnotify.Stopping()
 				cancel()
 			}()
+
+			// Under a Type=notify unit, mark the service started; with
+			// WatchdogSec set, the loop's per-iteration heartbeat keeps it
+			// alive and a wedged process gets killed and restarted.
+			sdnotify.Ready()
 
 			return loop.Run(ctx)
 		},

@@ -168,15 +168,27 @@ Description=Nightsky All-Sky Camera
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=pi
 ExecStart=/usr/local/bin/nightsky capture --config /etc/nightsky/nightsky.yaml
-Restart=on-failure
+Restart=always
 RestartSec=10
+# The capture loop sends a watchdog heartbeat every frame; if the process
+# wedges (camera driver stall, kernel hiccup) systemd kills and restarts it.
+# Must comfortably exceed the longest frame cycle (max exposure + capture
+# grace + retry backoff) — 10 minutes is safe for exposures up to 60s.
+WatchdogSec=600
+# Contain worst-case memory inside this service (ffmpeg children included)
+# so an OOM kill lands here — where Restart=always recovers it — rather
+# than on a random system process. Size for your board; 350M suits a
+# 512 MB Pi Zero 2 alongside memory_limit_mb: 250 in nightsky.yaml.
+MemoryMax=350M
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+Night sessions are named by the night's start date, so a mid-night watchdog restart resumes writing into the same directory.
 
 `/etc/systemd/system/nightsky-ui.service`:
 

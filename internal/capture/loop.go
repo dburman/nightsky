@@ -20,6 +20,7 @@ import (
 	imgutil "github.com/dburman/nightsky/internal/image"
 	"github.com/dburman/nightsky/internal/metrics"
 	"github.com/dburman/nightsky/internal/raw"
+	"github.com/dburman/nightsky/internal/sdnotify"
 	"github.com/dburman/nightsky/internal/timelapse"
 )
 
@@ -133,6 +134,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.initMode()
 
 	for {
+		// Pet the systemd watchdog (no-op outside systemd). Sent every
+		// iteration — including failure/backoff paths — so the watchdog
+		// fires only when the loop is truly wedged, not when the camera is
+		// merely erroring.
+		sdnotify.Heartbeat()
+
 		select {
 		case <-ctx.Done():
 			l.logger.Info("capture loop stopping")
