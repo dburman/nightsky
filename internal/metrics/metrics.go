@@ -29,8 +29,9 @@ type Snapshot struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// Write atomically writes snap to <outputDir>/.metrics.json.
-func Write(outputDir string, snap Snapshot) error {
+// Write atomically writes snap to <dir>/.metrics.json. The directory is
+// created if missing (it may live on tmpfs, recreated fresh each boot).
+func Write(dir string, snap Snapshot) error {
 	snap.UpdatedAt = time.Now()
 
 	data, err := json.Marshal(snap)
@@ -38,7 +39,10 @@ func Write(outputDir string, snap Snapshot) error {
 		return fmt.Errorf("marshal metrics: %w", err)
 	}
 
-	path := filepath.Join(outputDir, filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create metrics dir: %w", err)
+	}
+	path := filepath.Join(dir, filename)
 	tmp := path + ".tmp"
 
 	if err := os.WriteFile(tmp, data, 0644); err != nil {

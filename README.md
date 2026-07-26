@@ -178,6 +178,10 @@ RestartSec=10
 # Must comfortably exceed the longest frame cycle (max exposure + capture
 # grace + retry backoff) — 10 minutes is safe for exposures up to 60s.
 WatchdogSec=600
+# Creates /run/nightsky (tmpfs) for the live metrics file; pair with
+# metrics_dir: /run/nightsky in nightsky.yaml to keep the per-frame
+# .metrics.json rewrite off the SD card.
+RuntimeDirectory=nightsky
 # Contain worst-case memory inside this service (ffmpeg children included)
 # so an OOM kill lands here — where Restart=always recovers it — rather
 # than on a random system process. Size for your board; 350M suits a
@@ -334,6 +338,8 @@ night:
 ```yaml
 output:
   directory: ./output       # Base directory; images saved to <dir>/YYYY-MM-DD/
+  metrics_dir: ""           # Live metrics file location; use tmpfs (e.g. /run/nightsky)
+                            # to avoid per-frame SD writes. "" = output directory.
   filename_prefix: allsky   # Filename prefix for captured images
   # Disk space cleanup — choose one strategy (or leave both at 0 to keep everything):
   min_free_gb: 5            # Space-based (recommended): delete oldest nights when disk is low

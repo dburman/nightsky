@@ -102,7 +102,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	snap, err := metrics.Read(s.cfg.Output.Directory)
+	snap, err := metrics.Read(s.cfg.Output.MetricsDirectory())
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "capture not running", http.StatusServiceUnavailable)

@@ -105,6 +105,12 @@ type ModeConfig struct {
 type OutputConfig struct {
 	// Directory is the base output directory. Images are saved to <dir>/YYYY-MM-DD/.
 	Directory string `mapstructure:"directory"        json:"directory"`
+	// MetricsDir overrides where the live .metrics.json is written/read.
+	// It's rewritten after every frame, so pointing it at tmpfs (e.g.
+	// /run/nightsky via systemd RuntimeDirectory=nightsky) avoids constant
+	// small writes wearing the SD card. Empty = use Directory. The capture
+	// and serve processes must agree on this value.
+	MetricsDir string `mapstructure:"metrics_dir"      json:"metrics_dir"`
 	// FilenamePrefix for saved images (default "allsky").
 	FilenamePrefix string `mapstructure:"filename_prefix"  json:"filename_prefix"`
 	// DaysToKeep: delete directories older than this many days at end of night. 0 = disabled.
@@ -141,6 +147,15 @@ type OutputConfig struct {
 	StarTrails StarTrailsConfig `mapstructure:"startrails"       json:"startrails"`
 	// WebP conversion settings.
 	WebP WebPConfig `mapstructure:"webp"             json:"webp"`
+}
+
+// MetricsDirectory returns where the live metrics file lives: MetricsDir if
+// set, otherwise the output directory.
+func (o OutputConfig) MetricsDirectory() string {
+	if o.MetricsDir != "" {
+		return o.MetricsDir
+	}
+	return o.Directory
 }
 
 // KeogramConfig controls end-of-night keogram generation.
@@ -367,6 +382,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("day.save_raw", false)
 
 	v.SetDefault("output.directory", "./output")
+	v.SetDefault("output.metrics_dir", "")
 	v.SetDefault("output.filename_prefix", "allsky")
 	v.SetDefault("output.raw_calibration", false)
 	v.SetDefault("output.days_to_keep", 0)

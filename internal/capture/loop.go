@@ -441,7 +441,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			SensorTempC:    result.Meta.Temperature,
 			LastCapture:    result.Meta.Timestamp,
 		}
-		if err := metrics.Write(l.cfg.Output.Directory, snap); err != nil {
+		if err := metrics.Write(l.cfg.Output.MetricsDirectory(), snap); err != nil {
 			l.logger.Debug("metrics write failed", "error", err)
 		}
 

@@ -112,6 +112,12 @@ output:
   # Option B — time-based: delete directories older than N days regardless of
   # available space. 0 = disabled.
   days_to_keep: 0
+  # Where the live .metrics.json is written (rewritten after every frame).
+  # Point at tmpfs to avoid constant small writes wearing the SD card —
+  # e.g. /run/nightsky with RuntimeDirectory=nightsky in the systemd unit.
+  # "" = the output directory. Capture and serve must use the same value.
+  metrics_dir: ""
+
   # Overlay timestamp and metadata on images
   overlay: true
   overlay_font_size: 24
