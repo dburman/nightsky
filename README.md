@@ -337,6 +337,7 @@ output:
     preset: ""              # encoder preset (see codec notes below); "" = default
     gop: 0                  # max keyframe interval in frames; 0 = encoder default
     tune: ""                # encoder -tune value (codec-specific); "" = none
+    threads: 0              # cap encoder threads (2 recommended on Pi Zero 2); 0 = default
     # Iterative mode: encode a video segment every N captured frames during
     # the night, then concatenate segments at dawn without re-encoding.
     # Spreads encoding cost across the night instead of one big job at dawn.
@@ -401,6 +402,8 @@ All-sky timelapses are unusually compressible — large flat dark regions and sl
 - **`libx264` (default, most compatible).** Plays everywhere. `crf: 18`–`23`, `preset: slow`.
 
 A long keyframe interval helps a static-camera timelapse: try `gop: 250` (≈10 s at 25 fps). Encodes run at idle CPU priority (`nice -n 19`) so they don't starve capture.
+
+On low-memory boards (Pi Zero 2, 512 MB) also set `threads: 2` — it caps the encoder's thread pool (`-threads`, plus `lp=2` for SVT-AV1), roughly halving peak encode memory and softening the all-core CPU/power spike that can brown out a marginal supply. Combine with `segment_frames` so the night is encoded in small chunks rather than one large dawn job.
 
 Note: `deflicker` only smooths brightness *within* a single encode. With `segment_frames > 0` the night is encoded in independent segments and stream-copy concatenated, so brightness steps at segment boundaries are not smoothed — use `segment_frames: 0` when you want full-night deflicker.
 

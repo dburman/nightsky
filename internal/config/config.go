@@ -203,6 +203,10 @@ type TimelapseConfig struct {
 	GOP int `mapstructure:"gop" json:"gop"`
 	// Tune passes an encoder -tune value (codec-specific). Empty = none.
 	Tune string `mapstructure:"tune" json:"tune"`
+	// Threads caps encoder threads (-threads, plus lp=N for SVT-AV1).
+	// Fewer threads = lower peak memory and a smaller CPU/power spike —
+	// set to 2 on low-memory boards like the Pi Zero 2. 0 = encoder default.
+	Threads int `mapstructure:"threads" json:"threads"`
 	// SegmentFrames, when > 0, enables iterative mode: a video segment is
 	// encoded after every N captured frames. At end of night the segments are
 	// concatenated with stream copy (no re-encode). 0 = encode at end of night.
@@ -378,6 +382,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.preset", "")
 	v.SetDefault("output.timelapse.gop", 0)
 	v.SetDefault("output.timelapse.tune", "")
+	v.SetDefault("output.timelapse.threads", 0)
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)

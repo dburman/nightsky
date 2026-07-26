@@ -160,6 +160,10 @@ output:
     gop: 0
     # Encoder -tune value (codec-specific). "" = none.
     tune: ""
+    # Cap encoder threads (-threads, plus lp=N for SVT-AV1). Fewer threads =
+    # lower peak memory and a smaller CPU/power spike. Recommended: 2 on
+    # low-memory boards (Pi Zero 2). 0 = encoder default.
+    threads: 0
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses. Only effective
     # with segment_frames: 0 (it can't smooth across stream-copied segments).

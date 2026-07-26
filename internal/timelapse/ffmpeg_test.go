@@ -70,6 +70,12 @@ func buildEncodeArgsForTest(listPath string, cfg Config, allWebPInput bool) []st
 	if cfg.GOP > 0 {
 		args = append(args, "-g", "x")
 	}
+	if cfg.Threads > 0 {
+		args = append(args, "-threads", "x")
+		if cfg.Codec == "libsvtav1" {
+			args = append(args, "-svtav1-params", "x")
+		}
+	}
 	return args
 }
 
@@ -83,34 +89,40 @@ func hasFlag(args []string, flag string) bool {
 }
 
 func TestEncodeArgs_OptionalFlags(t *testing.T) {
-	// Unset preset/tune/gop must not appear.
+	// Unset preset/tune/gop/threads must not appear.
 	bare := buildEncodeArgsForTest("list.txt", Config{Codec: "libx264", Bitrate: "2000k"}, false)
-	for _, flag := range []string{"-preset", "-tune", "-g"} {
+	for _, flag := range []string{"-preset", "-tune", "-g", "-threads", "-svtav1-params"} {
 		if hasFlag(bare, flag) {
 			t.Errorf("%s present when unset", flag)
 		}
 	}
 
-	// Set values must appear.
+	// Set values must appear; SVT-AV1 additionally gets lp= via -svtav1-params.
 	full := buildEncodeArgsForTest("list.txt", Config{
-		Codec: "libsvtav1", CRF: 32, Preset: "6", GOP: 250, Tune: "psnr",
+		Codec: "libsvtav1", CRF: 32, Preset: "6", GOP: 250, Tune: "psnr", Threads: 2,
 	}, false)
-	for _, flag := range []string{"-preset", "-tune", "-g", "-crf"} {
+	for _, flag := range []string{"-preset", "-tune", "-g", "-crf", "-threads", "-svtav1-params"} {
 		if !hasFlag(full, flag) {
 			t.Errorf("%s missing when set", flag)
 		}
+	}
+
+	// Non-AV1 codecs get -threads but not -svtav1-params.
+	x264 := buildEncodeArgsForTest("list.txt", Config{Codec: "libx264", Bitrate: "2000k", Threads: 2}, false)
+	if !hasFlag(x264, "-threads") || hasFlag(x264, "-svtav1-params") {
+		t.Error("x264 threads handling wrong")
 	}
 }
 
 func TestFromConfig_MapsAllFields(t *testing.T) {
 	c := config.TimelapseConfig{
 		FPS: 30, Bitrate: "3000k", Codec: "libsvtav1", CRF: 32,
-		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr",
+		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr", Threads: 2,
 	}
 	got := FromConfig(c)
 	want := Config{
 		FPS: 30, Bitrate: "3000k", Codec: "libsvtav1", CRF: 32,
-		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr",
+		Deflicker: true, Preset: "6", GOP: 250, Tune: "psnr", Threads: 2,
 	}
 	if got != want {
 		t.Errorf("FromConfig = %+v, want %+v", got, want)

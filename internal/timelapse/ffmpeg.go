@@ -38,6 +38,9 @@ type Config struct {
 	GOP int
 	// Tune passes an encoder -tune value. Empty = none.
 	Tune string
+	// Threads caps encoder threads (-threads, plus lp=N for SVT-AV1).
+	// 0 = encoder default.
+	Threads int
 }
 
 // FromConfig maps the persisted timelapse settings to an encode Config.
@@ -51,6 +54,7 @@ func FromConfig(c config.TimelapseConfig) Config {
 		Preset:    c.Preset,
 		GOP:       c.GOP,
 		Tune:      c.Tune,
+		Threads:   c.Threads,
 	}
 }
 
@@ -327,6 +331,14 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 	}
 	if cfg.GOP > 0 {
 		args = append(args, "-g", fmt.Sprintf("%d", cfg.GOP))
+	}
+	if cfg.Threads > 0 {
+		args = append(args, "-threads", fmt.Sprintf("%d", cfg.Threads))
+		// SVT-AV1 manages its own thread pool via the lp (logical
+		// processors) parameter; -threads alone doesn't bound it.
+		if strings.Contains(cfg.Codec, "svtav1") {
+			args = append(args, "-svtav1-params", fmt.Sprintf("lp=%d", cfg.Threads))
+		}
 	}
 
 	if cfg.Deflicker {

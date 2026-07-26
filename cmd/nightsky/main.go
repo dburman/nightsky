@@ -275,6 +275,7 @@ func timelapseCmd() *cobra.Command {
 		preset  string
 		gop     int
 		tune    string
+		threads int
 	)
 
 	cmd := &cobra.Command{
@@ -305,6 +306,7 @@ func timelapseCmd() *cobra.Command {
 				Preset:  preset,
 				GOP:     gop,
 				Tune:    tune,
+				Threads: threads,
 			}
 
 			path, err := timelapse.Generate(context.Background(), dir, tlCfg, logger)
@@ -325,6 +327,7 @@ func timelapseCmd() *cobra.Command {
 	cmd.Flags().StringVar(&preset, "preset", "", "encoder preset (e.g. slow for x264/x265, 6 for SVT-AV1)")
 	cmd.Flags().IntVar(&gop, "gop", 0, "max keyframe interval in frames (0 = encoder default)")
 	cmd.Flags().StringVar(&tune, "tune", "", "encoder tune value (codec-specific)")
+	cmd.Flags().IntVar(&threads, "threads", 0, "cap encoder threads; lowers peak memory (0 = encoder default)")
 
 	return cmd
 }
