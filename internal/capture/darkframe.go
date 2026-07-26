@@ -30,10 +30,16 @@ type DarkFrameManager struct {
 	cam    camera.Camera
 	logger *slog.Logger
 
-	// cache/rawCache hold decoded master darks by filename so per-frame
-	// selection doesn't re-read and re-decode from disk every capture.
-	cache           map[string]image.Image
-	rawCache        map[string]*raw.Image
+	// Single-entry caches: only the most recently selected dark stays
+	// decoded. A decoded full-resolution dark is width×height×4 bytes
+	// (~50 MB at 12 MP), and auto-exposure walks several grid points per
+	// night — caching every one it touches would pin hundreds of MB on a
+	// 512 MB board. Selection changes rarely, so re-decoding on change is
+	// cheap.
+	cachedFile      string
+	cachedImg       image.Image
+	cachedRawFile   string
+	cachedRawImg    *raw.Image
 	lastSelected    string // most recently selected RGB dark, for log de-dup
 	lastRawSelected string // most recently selected raw master, for log de-dup
 }
@@ -316,13 +322,11 @@ func (dm *DarkFrameManager) saveRawMaster(key DarkFrameKey, frames []*raw.Image)
 	return nil
 }
 
-// loadRaw reads and decodes a Gray16 raw master by filename, caching the result.
+// loadRaw reads and decodes a Gray16 raw master by filename, keeping only the
+// most recent decode cached.
 func (dm *DarkFrameManager) loadRaw(name string) *raw.Image {
-	if dm.rawCache == nil {
-		dm.rawCache = make(map[string]*raw.Image)
-	}
-	if im, ok := dm.rawCache[name]; ok {
-		return im
+	if name == dm.cachedRawFile && dm.cachedRawImg != nil {
+		return dm.cachedRawImg
 	}
 
 	f, err := os.Open(filepath.Join(dm.Dir, name))
@@ -342,17 +346,15 @@ func (dm *DarkFrameManager) loadRaw(name string) *raw.Image {
 		return nil
 	}
 	im := raw.FromGray16(g)
-	dm.rawCache[name] = im
+	dm.cachedRawFile, dm.cachedRawImg = name, im
 	return im
 }
 
-// load reads and decodes a master dark by filename, caching the result.
+// load reads and decodes a master dark by filename, keeping only the most
+// recent decode cached (see the cache fields for why eviction matters).
 func (dm *DarkFrameManager) load(name string) image.Image {
-	if dm.cache == nil {
-		dm.cache = make(map[string]image.Image)
-	}
-	if img, ok := dm.cache[name]; ok {
-		return img
+	if name == dm.cachedFile && dm.cachedImg != nil {
+		return dm.cachedImg
 	}
 
 	f, err := os.Open(filepath.Join(dm.Dir, name))
@@ -366,7 +368,7 @@ func (dm *DarkFrameManager) load(name string) image.Image {
 		dm.logger.Warn("failed to decode dark frame", "file", name, "error", err)
 		return nil
 	}
-	dm.cache[name] = img
+	dm.cachedFile, dm.cachedImg = name, img
 	return img
 }
 

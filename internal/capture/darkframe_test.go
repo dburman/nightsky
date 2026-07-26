@@ -268,6 +268,31 @@ func TestSelectRawDark_NearestAndIsolated(t *testing.T) {
 	}
 }
 
+// The single-entry cache must return the correct dark when the selection
+// alternates — an eviction bug returning the previous dark would silently
+// mis-calibrate frames.
+func TestSelectDark_CacheEvictionCorrectness(t *testing.T) {
+	dir := t.TempDir()
+	keyA := DarkFrameKey{Exposure: 1000 * time.Millisecond, Gain: 100, Binning: 1}
+	keyB := DarkFrameKey{Exposure: 8000 * time.Millisecond, Gain: 100, Binning: 1}
+	writeDark(t, dir, keyA, 11)
+	writeDark(t, dir, keyB, 22)
+	dm := darkTestManager(dir)
+
+	for i, want := range []struct {
+		key DarkFrameKey
+		v   uint8
+	}{{keyA, 11}, {keyB, 22}, {keyA, 11}, {keyA, 11}, {keyB, 22}} {
+		got := dm.SelectDark(want.key)
+		if got == nil {
+			t.Fatalf("step %d: no dark selected", i)
+		}
+		if r, _, _, _ := got.At(0, 0).RGBA(); uint8(r>>8) != want.v {
+			t.Fatalf("step %d: pixel = %d, want %d", i, uint8(r>>8), want.v)
+		}
+	}
+}
+
 func TestSelectRawDark_NoneAvailable(t *testing.T) {
 	dm := darkTestManager(t.TempDir())
 	if got := dm.SelectRawDark(DarkFrameKey{Exposure: time.Second, Gain: 100, Binning: 1}); got != nil {
