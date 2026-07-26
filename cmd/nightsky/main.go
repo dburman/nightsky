@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 
@@ -613,61 +612,49 @@ func runNightEndProcessing(
 ) {
 	logger.Info("end of night processing", "dir", dateDir)
 
-	// Timelapse and keogram run in parallel — they are independent and use
-	// different CPU resources (ffmpeg vs. Go image decoding).
-	var wg sync.WaitGroup
-
+	// The heavy synthesis steps run strictly sequentially. They were once
+	// parallel ("different CPU resources"), but on low-memory boards the
+	// binding constraint is RAM, not CPU: an SVT-AV1 ffmpeg encode plus the
+	// keogram's NumCPU decode workers together exhaust a 512 MB Pi Zero 2 and
+	// summon the OOM killer. Sequential costs a few minutes of wall clock on
+	// large machines and makes dawn survivable on small ones.
 	if cfg.Output.Timelapse.Enabled {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
-			date := filepath.Base(dateDir)
-			var videoPath string
-			var err error
-			if cfg.Output.Timelapse.SegmentFrames > 0 {
-				videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
-			} else {
-				videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
+		tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
+		date := filepath.Base(dateDir)
+		var videoPath string
+		var err error
+		if cfg.Output.Timelapse.SegmentFrames > 0 {
+			videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
+		} else {
+			videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
+		}
+		if err != nil {
+			logger.Error("timelapse generation failed", "error", err)
+		} else if cfg.Upload.UploadTimelapse {
+			// Uploads are network-bound and may proceed in the background.
+			if s3Uploader != nil {
+				go func() {
+					if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
+						logger.Error("S3 timelapse upload failed", "error", err)
+					}
+				}()
 			}
-			if err != nil {
-				logger.Error("timelapse generation failed", "error", err)
-				return
+			if httpUploader != nil {
+				go func() {
+					if err := httpUploader.Upload(ctx, videoPath); err != nil {
+						logger.Error("HTTP timelapse upload failed", "error", err)
+					}
+				}()
 			}
-			if cfg.Upload.UploadTimelapse {
-				if s3Uploader != nil {
-					go func() {
-						if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
-							logger.Error("S3 timelapse upload failed", "error", err)
-						}
-					}()
-				}
-				if httpUploader != nil {
-					go func() {
-						if err := httpUploader.Upload(ctx, videoPath); err != nil {
-							logger.Error("HTTP timelapse upload failed", "error", err)
-						}
-					}()
-				}
-			}
-		}()
+		}
 	}
 
 	if cfg.Output.Keogram.Enabled {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
-				logger.Error("keogram generation failed", "error", err)
-			}
-		}()
+		if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
+			logger.Error("keogram generation failed", "error", err)
+		}
 	}
 
-	wg.Wait()
-
-	// Star trails runs after timelapse+keogram complete — it is the most
-	// memory-intensive task and benefits from others having released their
-	// allocations first.
 	if cfg.Output.StarTrails.Enabled {
 		if _, err := startrails.Generate(ctx, dateDir, startrails.DefaultMaxMeanBrightness, logger); err != nil {
 			logger.Error("star trails generation failed", "error", err)
