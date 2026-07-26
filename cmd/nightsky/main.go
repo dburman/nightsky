@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -75,6 +76,22 @@ func setupLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 }
 
+// applyMemoryLimit installs the configured soft Go heap limit so the GC
+// collects aggressively near the ceiling rather than letting the kernel OOM
+// killer pick a victim. A GOMEMLIMIT environment variable takes precedence
+// (the runtime already honours it at startup).
+func applyMemoryLimit(cfg *config.Config, logger *slog.Logger) {
+	if cfg.MemoryLimitMB <= 0 {
+		return
+	}
+	if env := os.Getenv("GOMEMLIMIT"); env != "" {
+		logger.Info("GOMEMLIMIT set in environment; ignoring memory_limit_mb", "gomemlimit", env)
+		return
+	}
+	debug.SetMemoryLimit(int64(cfg.MemoryLimitMB) << 20)
+	logger.Info("Go memory limit set", "limit_mb", cfg.MemoryLimitMB)
+}
+
 func loadConfig() (*config.Config, error) {
 	return config.Load(cfgFile)
 }
@@ -111,6 +128,8 @@ func captureCmd() *cobra.Command {
 				logger.Warn("timelapse.deflicker has no effect across segment boundaries with segment_frames > 0; " +
 					"set segment_frames: 0 for full-night deflicker")
 			}
+
+			applyMemoryLimit(cfg, logger)
 
 			// raw_calibration is the single switch for the raw pipeline; config
 			// loading already turned on DNG capture for both modes when set.
@@ -736,6 +755,7 @@ func processCmd() *cobra.Command {
 				cancel()
 			}()
 
+			applyMemoryLimit(cfg, logger)
 			runNightEndProcessing(ctx, dir, cfg, nil, nil, logger)
 			return nil
 		},

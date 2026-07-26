@@ -26,6 +26,12 @@ location:
   gps: false
   gps_addr: "localhost:2947"
 
+# Soft Go heap limit in MB (runtime GOMEMLIMIT). The GC collects aggressively
+# as usage nears the limit instead of letting the kernel OOM killer pick a
+# victim. Recommended ~250 on 512 MB boards (leaves headroom for ffmpeg).
+# 0 = no limit. The GOMEMLIMIT environment variable takes precedence.
+memory_limit_mb: 0
+
 # Day mode settings (sun above angle threshold)
 day:
   exposure: 1ms

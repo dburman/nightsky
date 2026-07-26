@@ -241,6 +241,8 @@ Nightsky uses a single YAML configuration file. The search order is:
 
 Environment variables override config file values with the prefix `NIGHTSKY_` (e.g., `NIGHTSKY_CAMERA_TYPE=zwo`).
 
+On low-memory boards, set a top-level `memory_limit_mb` (e.g. `250` on a 512 MB Pi Zero 2) — it installs a soft Go heap limit so the garbage collector frees memory aggressively before the kernel OOM killer gets involved, leaving headroom for ffmpeg during end-of-night encoding. The `GOMEMLIMIT` environment variable takes precedence when set.
+
 See [`configs/nightsky.example.yaml`](configs/nightsky.example.yaml) for a fully commented example.
 
 ### Camera

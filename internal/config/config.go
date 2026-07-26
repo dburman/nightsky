@@ -11,6 +11,13 @@ var Version = "dev"
 
 // Config is the top-level configuration for nightsky.
 type Config struct {
+	// MemoryLimitMB sets a soft Go heap limit (runtime/debug.SetMemoryLimit)
+	// so the garbage collector works harder as the limit approaches instead
+	// of letting the kernel OOM killer decide. Recommended ~250 on 512 MB
+	// boards (leave headroom for ffmpeg). 0 = no limit. Ignored when the
+	// GOMEMLIMIT environment variable is set.
+	MemoryLimitMB int `mapstructure:"memory_limit_mb" json:"memory_limit_mb"`
+
 	Camera   CameraConfig   `mapstructure:"camera"    json:"camera"`
 	Location LocationConfig `mapstructure:"location"  json:"location"`
 	Day      ModeConfig     `mapstructure:"day"       json:"day"`
@@ -308,6 +315,7 @@ func Load(configPath string) (*Config, error) {
 }
 
 func setDefaults(v *viper.Viper) {
+	v.SetDefault("memory_limit_mb", 0)
 	v.SetDefault("camera.type", "libcamera")
 	v.SetDefault("camera.index", 0)
 	v.SetDefault("camera.device", 0)
