@@ -522,7 +522,7 @@ Global Flags:
 
 Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. All images from a single night session are kept in one directory named after the night's start date, even when captures cross midnight.
 
-At the end of each night, generates (in parallel where possible): a timelapse video, a keogram, a star-trails image, and a white balance analysis report. If WebP conversion is enabled it runs next, then uploads and disk cleanup.
+At the end of each night the synthesis suite runs sequentially (one memory-heavy job at a time), quick outputs first: keogram, star trails, white balance analysis, then the timelapse encode (uploaded in the background when configured), then WebP conversion, and finally disk cleanup. Day capture continues concurrently — end-of-night processing runs in the background.
 
 ```bash
 nightsky capture

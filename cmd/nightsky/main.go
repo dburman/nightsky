@@ -647,37 +647,10 @@ func runNightEndProcessing(
 	// keogram's NumCPU decode workers together exhaust a 512 MB Pi Zero 2 and
 	// summon the OOM killer. Sequential costs a few minutes of wall clock on
 	// large machines and makes dawn survivable on small ones.
-	if cfg.Output.Timelapse.Enabled {
-		tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
-		date := filepath.Base(dateDir)
-		var videoPath string
-		var err error
-		if cfg.Output.Timelapse.SegmentFrames > 0 {
-			videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
-		} else {
-			videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
-		}
-		if err != nil {
-			logger.Error("timelapse generation failed", "error", err)
-		} else if cfg.Upload.UploadTimelapse {
-			// Uploads are network-bound and may proceed in the background.
-			if s3Uploader != nil {
-				go func() {
-					if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
-						logger.Error("S3 timelapse upload failed", "error", err)
-					}
-				}()
-			}
-			if httpUploader != nil {
-				go func() {
-					if err := httpUploader.Upload(ctx, videoPath); err != nil {
-						logger.Error("HTTP timelapse upload failed", "error", err)
-					}
-				}()
-			}
-		}
-	}
-
+	//
+	// The quick outputs (keogram, star trails, WB analysis) run before the
+	// timelapse encode, so they're available minutes after dawn instead of
+	// waiting behind the longest job.
 	if cfg.Output.Keogram.Enabled {
 		if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
 			logger.Error("keogram generation failed", "error", err)
@@ -709,6 +682,40 @@ func runNightEndProcessing(
 			logger.Error("WB report write failed", "error", err)
 		} else {
 			logger.Info("WB analysis written", "dir", dateDir)
+		}
+	}
+
+	// Timelapse encode — the longest job, deliberately last among the
+	// synthesis steps (but before WebP conversion, which may delete the
+	// source PNGs the encoder reads).
+	if cfg.Output.Timelapse.Enabled {
+		tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
+		date := filepath.Base(dateDir)
+		var videoPath string
+		var err error
+		if cfg.Output.Timelapse.SegmentFrames > 0 {
+			videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
+		} else {
+			videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
+		}
+		if err != nil {
+			logger.Error("timelapse generation failed", "error", err)
+		} else if cfg.Upload.UploadTimelapse {
+			// Uploads are network-bound and may proceed in the background.
+			if s3Uploader != nil {
+				go func() {
+					if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
+						logger.Error("S3 timelapse upload failed", "error", err)
+					}
+				}()
+			}
+			if httpUploader != nil {
+				go func() {
+					if err := httpUploader.Upload(ctx, videoPath); err != nil {
+						logger.Error("HTTP timelapse upload failed", "error", err)
+					}
+				}()
+			}
 		}
 	}
 
