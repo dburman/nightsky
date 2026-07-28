@@ -220,13 +220,18 @@ func captureCmd() *cobra.Command {
 				for i := 0; i < 2; i++ {
 					go func() {
 						for j := range jobs {
+							j := j
 							if s3Uploader != nil {
-								if err := s3Uploader.Upload(ctx, j.path, j.dateDir); err != nil {
+								if err := upload.WithRetry(ctx, logger, "S3 image", func() error {
+									return s3Uploader.Upload(ctx, j.path, j.dateDir)
+								}); err != nil {
 									logger.Error("S3 image upload failed", "error", err)
 								}
 							}
 							if httpUploader != nil {
-								if err := httpUploader.Upload(ctx, j.path); err != nil {
+								if err := upload.WithRetry(ctx, logger, "HTTP image", func() error {
+									return httpUploader.Upload(ctx, j.path)
+								}); err != nil {
 									logger.Error("HTTP image upload failed", "error", err)
 								}
 							}
@@ -735,14 +740,18 @@ func runNightEndProcessing(
 			// Uploads are network-bound and may proceed in the background.
 			if s3Uploader != nil {
 				go func() {
-					if err := s3Uploader.Upload(ctx, videoPath, "timelapse"); err != nil {
+					if err := upload.WithRetry(ctx, logger, "S3 timelapse", func() error {
+						return s3Uploader.Upload(ctx, videoPath, "timelapse")
+					}); err != nil {
 						logger.Error("S3 timelapse upload failed", "error", err)
 					}
 				}()
 			}
 			if httpUploader != nil {
 				go func() {
-					if err := httpUploader.Upload(ctx, videoPath); err != nil {
+					if err := upload.WithRetry(ctx, logger, "HTTP timelapse", func() error {
+						return httpUploader.Upload(ctx, videoPath)
+					}); err != nil {
 						logger.Error("HTTP timelapse upload failed", "error", err)
 					}
 				}()
