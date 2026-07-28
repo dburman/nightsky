@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSweepStaleTmp(t *testing.T) {
@@ -35,6 +36,23 @@ func TestSweepStaleTmp(t *testing.T) {
 	for _, kept := range []string{"allsky-20260610221530.png", "timelapse-2026-06-10.mp4"} {
 		if _, err := os.Stat(filepath.Join(dateDir, kept)); err != nil {
 			t.Errorf("%s should have been kept: %v", kept, err)
+		}
+	}
+}
+
+func TestStaleLimit(t *testing.T) {
+	cases := []struct {
+		delay time.Duration
+		want  time.Duration
+	}{
+		{0, 30 * time.Minute},                 // night: continuous capture
+		{5 * time.Second, 30 * time.Minute},   // short delay: base applies
+		{10 * time.Minute, 30 * time.Minute},  // 3x = 30m, base still applies
+		{20 * time.Minute, 60 * time.Minute},  // long day delay stretches limit
+	}
+	for _, c := range cases {
+		if got := staleLimit(c.delay); got != c.want {
+			t.Errorf("staleLimit(%v) = %v, want %v", c.delay, got, c.want)
 		}
 	}
 }

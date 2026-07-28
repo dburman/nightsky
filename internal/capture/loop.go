@@ -62,6 +62,7 @@ type Loop struct {
 	skipRemaining   int
 	failureStreak   int  // consecutive capture failures, for backoff and reinit
 	rawWarned       bool // de-dups raw-calibration fallback warnings
+	lastCaptured    time.Time // when the camera last delivered a frame, for the staleness tripwire
 	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
 
 	// Iterative timelapse state (used when SegmentFrames > 0). segmentWg is
@@ -133,12 +134,25 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.logger.Info("initial mode", "mode", l.mode)
 	l.initMode()
 
+	l.lastCaptured = time.Now()
+
 	for {
 		// Pet the systemd watchdog (no-op outside systemd). Sent every
 		// iteration — including failure/backoff paths — so the watchdog
 		// fires only when the loop is truly wedged, not when the camera is
 		// merely erroring.
 		sdnotify.Heartbeat()
+
+		// Staleness tripwire: the watchdog catches a wedged process and
+		// backoff handles a flaky camera, but a camera that errors forever
+		// keeps the loop alive while producing nothing. Exit non-zero so
+		// systemd restarts the whole process (fresh camera stack) rather
+		// than silently losing the night. Keyed on successful captures, not
+		// saves, so long-delay skip-frame stretches can't false-trip it.
+		if limit := staleLimit(l.modeConfig().Delay); time.Since(l.lastCaptured) > limit {
+			return fmt.Errorf("no successful capture in %s (limit %s) — exiting for a clean restart",
+				time.Since(l.lastCaptured).Round(time.Second), limit)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -254,6 +268,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 		l.failureStreak = 0
+		l.lastCaptured = time.Now()
 
 		l.frameCount++
 
@@ -574,6 +589,17 @@ func (l *Loop) calibrateRaw(result *camera.CaptureResult, modeCfg config.ModeCon
 		Gamma:  2.2,
 	})
 	return rgb, mean, nil
+}
+
+// staleLimit is how long the loop tolerates zero successful captures before
+// exiting for a restart: 30 minutes, or 3× the configured inter-frame delay
+// when that is longer (a 20-minute day delay must not trip it).
+func staleLimit(delay time.Duration) time.Duration {
+	const base = 30 * time.Minute
+	if d := 3 * delay; d > base {
+		return d
+	}
+	return base
 }
 
 // failureBackoff returns the retry delay after n consecutive capture
