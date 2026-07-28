@@ -229,6 +229,12 @@ type TimelapseConfig struct {
 	// Fewer threads = lower peak memory and a smaller CPU/power spike —
 	// set to 2 on low-memory boards like the Pi Zero 2. 0 = encoder default.
 	Threads int `mapstructure:"threads" json:"threads"`
+	// ThermalLimitC defers encode start while the SoC is hotter than this
+	// (°C, read from /sys/class/thermal), rechecking every 2 minutes for up
+	// to 30 minutes. Prevents piling encode heat onto an already-hot chip
+	// (frequency capping, SDIO WiFi instability on Pi Zero 2). Recommended
+	// 70 on Pi-class hardware. 0 = disabled.
+	ThermalLimitC int `mapstructure:"thermal_limit_c" json:"thermal_limit_c"`
 	// SegmentFrames, when > 0, enables iterative mode: a video segment is
 	// encoded after every N captured frames. At end of night the segments are
 	// concatenated with stream copy (no re-encode). 0 = encode at end of night.
@@ -407,6 +413,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.gop", 0)
 	v.SetDefault("output.timelapse.tune", "")
 	v.SetDefault("output.timelapse.threads", 0)
+	v.SetDefault("output.timelapse.thermal_limit_c", 0)
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)

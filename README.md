@@ -425,6 +425,8 @@ A long keyframe interval helps a static-camera timelapse: try `gop: 250` (≈10 
 
 On low-memory boards (Pi Zero 2, 512 MB) also set `threads: 2` — it caps the encoder's thread pool (`-threads`, plus `lp=2` for SVT-AV1), roughly halving peak encode memory and softening the all-core CPU/power spike that can brown out a marginal supply. Combine with `segment_frames` so the night is encoded in small chunks rather than one large dawn job.
 
+For enclosures that run hot (summer sun on an all-sky dome), set `thermal_limit_c: 70` — each encode then waits for the SoC to cool below the limit before starting (rechecking every 2 minutes, up to 30 minutes) instead of piling encode heat onto an already-hot chip. Sustained heat triggers CPU frequency capping and destabilizes the Pi Zero 2's SDIO WiFi.
+
 Note: `deflicker` only smooths brightness *within* a single encode. With `segment_frames > 0` the night is encoded in independent segments and stream-copy concatenated, so brightness steps at segment boundaries are not smoothed — use `segment_frames: 0` when you want full-night deflicker.
 
 ### Upload

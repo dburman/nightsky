@@ -176,6 +176,11 @@ output:
     # lower peak memory and a smaller CPU/power spike. Recommended: 2 on
     # low-memory boards (Pi Zero 2). 0 = encoder default.
     threads: 0
+    # Defer encode start while the SoC is hotter than this (°C), rechecking
+    # every 2 minutes for up to 30 minutes. Keeps encode heat off an
+    # already-hot chip (thermal capping, SDIO WiFi instability). Recommended
+    # 70 on Pi-class hardware. 0 = disabled.
+    thermal_limit_c: 0
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses. Only effective
     # with segment_frames: 0 (it can't smooth across stream-copied segments).

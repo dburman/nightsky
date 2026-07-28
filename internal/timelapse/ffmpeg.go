@@ -41,6 +41,9 @@ type Config struct {
 	// Threads caps encoder threads (-threads, plus lp=N for SVT-AV1).
 	// 0 = encoder default.
 	Threads int
+	// ThermalLimitC defers encode start while the SoC is hotter than this
+	// (°C), rechecking until it cools or a max wait elapses. 0 = disabled.
+	ThermalLimitC int
 }
 
 // FromConfig maps the persisted timelapse settings to an encode Config.
@@ -53,8 +56,9 @@ func FromConfig(c config.TimelapseConfig) Config {
 		Deflicker: c.Deflicker,
 		Preset:    c.Preset,
 		GOP:       c.GOP,
-		Tune:      c.Tune,
-		Threads:   c.Threads,
+		Tune:          c.Tune,
+		Threads:       c.Threads,
+		ThermalLimitC: c.ThermalLimitC,
 	}
 }
 
@@ -90,6 +94,8 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 		"fps", cfg.FPS,
 		"codec", cfg.Codec,
 	)
+
+	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
 
 	date := filepath.Base(imageDir)
 	outputPath := filepath.Join(imageDir, "timelapse-"+date+".mp4")
@@ -137,6 +143,8 @@ func GenerateSegment(ctx context.Context, dir string, segIdx int, segmentFrames 
 
 	logger.Info("generating timelapse segment", "dir", dir, "segment", segIdx, "frames", len(images))
 
+	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
+
 	if err := encodeImages(ctx, dir, images, tmpOutput, cfg); err != nil {
 		return "", err
 	}
@@ -165,6 +173,8 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	}
 
 	removeStaleTmp(dir, logger)
+
+	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
 
 	segments, err := collectSegments(dir)
 	if err != nil {
