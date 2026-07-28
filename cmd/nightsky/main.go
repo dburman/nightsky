@@ -627,6 +627,13 @@ func analyzeCmd() *cobra.Command {
 	return cmd
 }
 
+// Per-step time budgets for end-of-night processing. Generous — they exist to
+// unstick a hung step, not to police slow ones.
+const (
+	nightEndStepTimeout   = 2 * time.Hour
+	nightEndEncodeTimeout = 8 * time.Hour
+)
+
 // runNightEndProcessing runs the full end-of-night synthesis suite for dateDir:
 // timelapse, keogram, star trails, WB analysis, and WebP conversion.
 // Disk cleanup (prune/clean) is intentionally excluded so callers can apply
@@ -648,19 +655,39 @@ func runNightEndProcessing(
 	// summon the OOM killer. Sequential costs a few minutes of wall clock on
 	// large machines and makes dawn survivable on small ones.
 	//
+	// Each step gets its own timeout: because the pipeline is sequential, one
+	// hung step (a stuck ffmpeg, a wedged decode) would otherwise silently
+	// stall everything behind it forever. A timed-out step is logged and
+	// skipped; a later `nightsky process` run redoes whatever is missing.
+	//
 	// The quick outputs (keogram, star trails, WB analysis) run before the
 	// timelapse encode, so they're available minutes after dawn instead of
 	// waiting behind the longest job.
-	if cfg.Output.Keogram.Enabled {
-		if _, err := keogram.Generate(ctx, dateDir, keogram.DefaultMaxMeanBrightness, logger); err != nil {
-			logger.Error("keogram generation failed", "error", err)
+	step := func(name string, timeout time.Duration, fn func(context.Context) error) {
+		stepCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		err := fn(stepCtx)
+		if stepCtx.Err() == context.DeadlineExceeded {
+			logger.Error("night-end step timed out and was skipped", "step", name, "timeout", timeout)
+			return
+		}
+		if err != nil {
+			logger.Error(name+" failed", "error", err)
 		}
 	}
 
+	if cfg.Output.Keogram.Enabled {
+		step("keogram generation", nightEndStepTimeout, func(c context.Context) error {
+			_, err := keogram.Generate(c, dateDir, keogram.DefaultMaxMeanBrightness, logger)
+			return err
+		})
+	}
+
 	if cfg.Output.StarTrails.Enabled {
-		if _, err := startrails.Generate(ctx, dateDir, startrails.DefaultMaxMeanBrightness, logger); err != nil {
-			logger.Error("star trails generation failed", "error", err)
-		}
+		step("star trails generation", nightEndStepTimeout, func(c context.Context) error {
+			_, err := startrails.Generate(c, dateDir, startrails.DefaultMaxMeanBrightness, logger)
+			return err
+		})
 	}
 
 	// White balance analysis.
@@ -693,11 +720,15 @@ func runNightEndProcessing(
 		date := filepath.Base(dateDir)
 		var videoPath string
 		var err error
+		// Longer budget: a quota'd or thermally-deferred encode of a full
+		// night can legitimately run for hours.
+		tlCtx, tlCancel := context.WithTimeout(ctx, nightEndEncodeTimeout)
 		if cfg.Output.Timelapse.SegmentFrames > 0 {
-			videoPath, err = timelapse.FinalizeSegments(ctx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
+			videoPath, err = timelapse.FinalizeSegments(tlCtx, dateDir, date, cfg.Output.Timelapse.SegmentFrames, tlCfg, logger)
 		} else {
-			videoPath, err = timelapse.Generate(ctx, dateDir, tlCfg, logger)
+			videoPath, err = timelapse.Generate(tlCtx, dateDir, tlCfg, logger)
 		}
+		tlCancel()
 		if err != nil {
 			logger.Error("timelapse generation failed", "error", err)
 		} else if cfg.Upload.UploadTimelapse {
@@ -722,13 +753,13 @@ func runNightEndProcessing(
 	// WebP conversion — runs after all generation steps so the timelapse
 	// input list is never broken by missing PNGs.
 	if cfg.Output.WebP.Enabled {
-		if err := convert.ConvertPNGsToWebP(ctx, dateDir,
-			cfg.Output.WebP.Quality,
-			cfg.Output.WebP.DeleteOriginals,
-			logger,
-		); err != nil {
-			logger.Error("webp conversion failed", "error", err)
-		}
+		step("webp conversion", nightEndStepTimeout, func(c context.Context) error {
+			return convert.ConvertPNGsToWebP(c, dateDir,
+				cfg.Output.WebP.Quality,
+				cfg.Output.WebP.DeleteOriginals,
+				logger,
+			)
+		})
 	}
 }
 
