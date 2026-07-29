@@ -24,6 +24,11 @@ type Snapshot struct {
 	FrameCount     int64     `json:"frame_count"`
 	MeanBrightness float64   `json:"mean_brightness"`
 	CloudCoverage  float64   `json:"cloud_coverage"`
+	GreenRatio     float64   `json:"green_ratio"`
+	StarCount      int       `json:"star_count"`
+	StarFWHM       float64   `json:"star_fwhm"`
+	MoonAltitude   float64   `json:"moon_altitude"`
+	MoonIllum      float64   `json:"moon_illumination"`
 	SensorTempC    float64   `json:"sensor_temp_c"`
 	LastCapture    time.Time `json:"last_capture"`
 	UpdatedAt      time.Time `json:"updated_at"`

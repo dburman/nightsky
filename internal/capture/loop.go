@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dburman/nightsky/internal/alerts"
 	"github.com/dburman/nightsky/internal/astro"
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/cloud"
@@ -21,6 +22,7 @@ import (
 	"github.com/dburman/nightsky/internal/metrics"
 	"github.com/dburman/nightsky/internal/raw"
 	"github.com/dburman/nightsky/internal/sdnotify"
+	"github.com/dburman/nightsky/internal/stars"
 	"github.com/dburman/nightsky/internal/timelapse"
 )
 
@@ -36,6 +38,10 @@ const (
 // checks. At typical night cadence (~5-15s/frame) this checks every few
 // minutes — fast enough to react before a nearly-full card runs out.
 const diskCheckInterval = 50
+
+// starDetectEvery is how many night frames pass between star-detection runs;
+// detection walks the full sky region, so it's sampled rather than per-frame.
+const starDetectEvery = 5
 
 func (m Mode) String() string {
 	if m == ModeDay {
@@ -82,6 +88,13 @@ type Loop struct {
 	// Callbacks for upload integration.
 	OnImageSaved func(path string, meta camera.CaptureMeta)
 	OnNightEnd   func(dateDir string)
+
+	// Notifier, when set by the caller, receives aurora alerts and night
+	// summaries. A nil notifier disables both.
+	Notifier *alerts.Notifier
+
+	auroraDet *alerts.AuroraDetector // nil unless aurora alerting is enabled
+	lastStars stars.Result           // most recent star detection, for metrics
 }
 
 // NewLoop creates a new capture loop.
@@ -97,6 +110,14 @@ func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 	// Initialize dark frame manager if enabled.
 	if cfg.Dark.Enabled {
 		l.darkMgr = NewDarkFrameManager(cfg.Dark.Directory, cfg.Dark.Count, cam, logger)
+	}
+
+	if cfg.Alerts.Aurora.Enabled {
+		l.auroraDet = alerts.NewAuroraDetector(alerts.AuroraConfig{
+			RatioThreshold: cfg.Alerts.Aurora.RatioThreshold,
+			MinFrames:      cfg.Alerts.Aurora.MinFrames,
+			MaxCloud:       cfg.Alerts.Aurora.MaxCloud,
+		})
 	}
 
 	// Initialize flat field manager if enabled.
@@ -297,6 +318,18 @@ func (l *Loop) Run(ctx context.Context) error {
 			meteredMean = ZoneMean(result.Image, modeCfg.MeteringZone)
 		}
 
+		// Moon-compensated auto-exposure: while the moon is up, raise the
+		// target proportionally to its illuminated fraction so the
+		// controller stops fighting moonlight with maximum gain.
+		if modeCfg.AutoExposure && modeCfg.MoonTargetBoost > 0 {
+			target := modeCfg.TargetBrightness
+			now := time.Now()
+			if astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude > 0 {
+				target *= 1 + modeCfg.MoonTargetBoost*astro.MoonPhase(now)
+			}
+			l.exposureCtrl.TargetBrightness = target
+		}
+
 		// Skip frames after mode transition.
 		if l.skipRemaining > 0 {
 			l.skipRemaining--
@@ -334,10 +367,24 @@ func (l *Loop) Run(ctx context.Context) error {
 			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint, sc.AutoBlackPercentile, sc.AutoWhitePercentile)
 		}
 
-		// Cloud coverage metric — night frames only.
+		// Sky metrics — night frames only: cloud coverage, green ratio,
+		// star statistics, and aurora detection.
 		if l.mode == ModeNight {
 			m := cloud.Estimate(processedImg, result.Meta.Timestamp)
+
+			// Star detection is heavier than the sampled stats; run it on
+			// every starDetectEvery-th frame and carry the result forward.
+			if l.frameCount%starDetectEvery == 0 {
+				l.lastStars = stars.Detect(processedImg)
+			}
+			m.StarCount = l.lastStars.Count
+			m.StarFWHM = l.lastStars.MeanFWHM
+
 			l.cloudMetrics = append(l.cloudMetrics, m)
+
+			if l.auroraDet != nil && l.auroraDet.Observe(m.GreenRatio, m.Coverage) {
+				l.sendAuroraAlert(ctx, m)
+			}
 		}
 
 		// Apply overlay.
@@ -441,10 +488,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		}
 
 		// Write live metrics for the web server's /api/metrics endpoint.
-		cloudCov := 0.0
+		cloudCov, greenRatio := 0.0, 0.0
 		if len(l.cloudMetrics) > 0 {
-			cloudCov = l.cloudMetrics[len(l.cloudMetrics)-1].Coverage
+			last := l.cloudMetrics[len(l.cloudMetrics)-1]
+			cloudCov, greenRatio = last.Coverage, last.GreenRatio
 		}
+		now := time.Now()
 		snap := metrics.Snapshot{
 			Mode:           l.mode.String(),
 			ExposureNs:     l.exposureCtrl.Exposure.Nanoseconds(),
@@ -453,6 +502,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			FrameCount:     l.frameCount,
 			MeanBrightness: meteredMean,
 			CloudCoverage:  cloudCov,
+			GreenRatio:     greenRatio,
+			StarCount:      l.lastStars.Count,
+			StarFWHM:       l.lastStars.MeanFWHM,
+			MoonAltitude:   astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude,
+			MoonIllum:      astro.MoonPhase(now),
 			SensorTempC:    result.Meta.Temperature,
 			LastCapture:    result.Meta.Timestamp,
 		}
@@ -517,6 +571,11 @@ func (l *Loop) initMode() {
 			// Fresh group per session — the previous night's group may still
 			// be drained by its end-of-night goroutine.
 			l.segmentWg = &sync.WaitGroup{}
+			// Fresh sky-metric state for the new night.
+			if l.auroraDet != nil {
+				l.auroraDet.Reset()
+			}
+			l.lastStars = stars.Result{}
 		}
 		l.nightFrameCount = 0
 	}
@@ -589,6 +648,21 @@ func (l *Loop) calibrateRaw(result *camera.CaptureResult, modeCfg config.ModeCon
 		Gamma:  2.2,
 	})
 	return rgb, mean, nil
+}
+
+// sendAuroraAlert delivers an aurora notification in the background.
+func (l *Loop) sendAuroraAlert(ctx context.Context, m cloud.Metric) {
+	msg := fmt.Sprintf("Possible aurora at %s — green ratio %.2f, cloud %.0f%%, %d stars visible.",
+		m.Timestamp.Format("15:04"), m.GreenRatio, m.Coverage*100, m.StarCount)
+	if base := l.cfg.Alerts.BaseURL; base != "" {
+		msg += " Live view: " + strings.TrimRight(base, "/") + "/latest"
+	}
+	l.logger.Info("aurora alert triggered", "green_ratio", m.GreenRatio, "cloud", m.Coverage)
+	go func() {
+		if err := l.Notifier.Send(ctx, "Possible aurora", msg); err != nil {
+			l.logger.Error("aurora alert delivery failed", "error", err)
+		}
+	}()
 }
 
 // staleLimit is how long the loop tolerates zero successful captures before

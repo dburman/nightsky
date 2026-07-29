@@ -26,6 +26,33 @@ type Config struct {
 	Upload   UploadConfig   `mapstructure:"upload"    json:"upload"`
 	Dark     DarkConfig     `mapstructure:"dark"      json:"dark"`
 	Flat     FlatConfig     `mapstructure:"flat"      json:"flat"`
+	Alerts   AlertsConfig   `mapstructure:"alerts"    json:"alerts"`
+}
+
+// AlertsConfig controls push notifications via a webhook (ntfy-compatible:
+// message body + Title header).
+type AlertsConfig struct {
+	// WebhookURL receives notifications (e.g. https://ntfy.sh/<topic>).
+	// Empty disables all alerts.
+	WebhookURL string `mapstructure:"webhook_url" json:"webhook_url,omitempty"`
+	// BaseURL, when set, is used to build links in messages (e.g.
+	// http://astrocam:8080 → links to /latest).
+	BaseURL string `mapstructure:"base_url" json:"base_url"`
+	// NightSummary sends a dawn message with the night's statistics.
+	NightSummary bool `mapstructure:"night_summary" json:"night_summary"`
+	// Aurora detection settings.
+	Aurora AuroraAlertConfig `mapstructure:"aurora" json:"aurora"`
+}
+
+// AuroraAlertConfig tunes the green-excess aurora detector.
+type AuroraAlertConfig struct {
+	Enabled bool `mapstructure:"enabled" json:"enabled"`
+	// RatioThreshold: green ratio must exceed baseline × this (default 1.3).
+	RatioThreshold float64 `mapstructure:"ratio_threshold" json:"ratio_threshold"`
+	// MinFrames of sustained excess before alerting (default 3).
+	MinFrames int `mapstructure:"min_frames" json:"min_frames"`
+	// MaxCloud suppresses detection above this coverage (default 0.5).
+	MaxCloud float64 `mapstructure:"max_cloud" json:"max_cloud"`
 }
 
 // CameraConfig identifies which camera backend and device to use.
@@ -99,6 +126,12 @@ type ModeConfig struct {
 	// DNG preserves the full sensor bit depth and Bayer pattern for
 	// post-processing in tools like Lightroom, darktable, or RawTherapee.
 	SaveRaw bool `mapstructure:"save_raw"          json:"save_raw"`
+	// MoonTargetBoost raises the auto-exposure target while the moon is up,
+	// proportionally to its illuminated fraction: effective target =
+	// target_brightness × (1 + boost × illumination). Stops auto-exposure
+	// from fighting moonlight with maximum gain. 0 = disabled. Night mode
+	// only; typical value 0.5.
+	MoonTargetBoost float64 `mapstructure:"moon_target_boost" json:"moon_target_boost"`
 }
 
 // OutputConfig controls where and how images are saved.
@@ -436,6 +469,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("flat.enabled", false)
 	v.SetDefault("flat.directory", "./flats")
 	v.SetDefault("flat.count", 10)
+
+	v.SetDefault("night.moon_target_boost", 0.0)
+	v.SetDefault("day.moon_target_boost", 0.0)
+
+	v.SetDefault("alerts.webhook_url", "")
+	v.SetDefault("alerts.base_url", "")
+	v.SetDefault("alerts.night_summary", false)
+	v.SetDefault("alerts.aurora.enabled", false)
+	v.SetDefault("alerts.aurora.ratio_threshold", 1.3)
+	v.SetDefault("alerts.aurora.min_frames", 3)
+	v.SetDefault("alerts.aurora.max_cloud", 0.5)
 }
 
 func validate(cfg *Config) error {

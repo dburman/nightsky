@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dburman/nightsky/internal/alerts"
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/camera/libcamera"
 	"github.com/dburman/nightsky/internal/capture"
@@ -206,6 +207,7 @@ func captureCmd() *cobra.Command {
 
 			// Create and configure the capture loop.
 			loop := capture.NewLoop(cam, cfg, logger)
+			loop.Notifier = alerts.NewNotifier(cfg.Alerts.WebhookURL, logger)
 
 			// Wire up image upload callback. Uploads run on a small worker
 			// pool fed by a bounded queue, so a slow uplink can't pile up a
