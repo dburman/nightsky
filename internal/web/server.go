@@ -15,11 +15,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dburman/nightsky/internal/config"
 	imgutil "github.com/dburman/nightsky/internal/image"
 	"github.com/dburman/nightsky/internal/metrics"
+	"github.com/dburman/nightsky/internal/stars"
 )
 
 //go:embed static/index.html
@@ -36,6 +38,14 @@ type Server struct {
 	// phone scrolling the gallery can trigger several simultaneous decodes
 	// while capture and an encode are running on a low-memory board.
 	thumbSem chan struct{}
+
+	// Focus-aid cache: star detection on the latest frame is recomputed only
+	// when the frame changes, so focus-mode polling doesn't re-decode the
+	// same image. Guarded by focusMu.
+	focusMu   sync.Mutex
+	focusPath string
+	focusMod  time.Time
+	focusRes  stars.Result
 }
 
 // New creates a new Server.
@@ -57,6 +67,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/metrics", s.handleMetrics)
 	mux.HandleFunc("GET /api/captures", s.handleCaptures)
 	mux.HandleFunc("GET /api/captures/{date}/images", s.handleDateImages)
+	mux.HandleFunc("GET /api/focus", s.handleFocus)
 	mux.HandleFunc("GET /latest", s.handleLatest)
 	mux.HandleFunc("GET /output/{path...}", s.handleOutput)
 	return mux
@@ -96,6 +107,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := *s.cfg
 	if cfg.Upload.HTTP.Authorization != "" {
 		cfg.Upload.HTTP.Authorization = "[redacted]"
+	}
+	// An ntfy-style webhook URL contains the (secret) topic.
+	if cfg.Alerts.WebhookURL != "" {
+		cfg.Alerts.WebhookURL = "[redacted]"
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(cfg)
@@ -381,6 +396,59 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.Write(buf.Bytes())
+}
+
+// handleFocus runs star detection on the most recent frame and returns the
+// count and mean FWHM — a live focus aid: adjust the lens to maximize stars
+// and minimize FWHM. Results are cached per frame (path + mtime), so polling
+// only pays for a decode when a new frame lands.
+func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
+	path, err := latestImagePath(s.cfg.Output.Directory)
+	if err != nil || path == "" {
+		http.Error(w, "no images found", http.StatusNotFound)
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		http.Error(w, "no images found", http.StatusNotFound)
+		return
+	}
+
+	s.focusMu.Lock()
+	cached := s.focusPath == path && s.focusMod.Equal(info.ModTime())
+	res := s.focusRes
+	s.focusMu.Unlock()
+
+	if !cached {
+		// Full-frame decode — bound it like the thumbnail path.
+		s.thumbSem <- struct{}{}
+		f, err := os.Open(path)
+		if err != nil {
+			<-s.thumbSem
+			http.Error(w, "failed to open image", http.StatusInternalServerError)
+			return
+		}
+		img, _, err := image.Decode(f)
+		f.Close()
+		<-s.thumbSem
+		if err != nil {
+			http.Error(w, "failed to decode image", http.StatusInternalServerError)
+			return
+		}
+		res = stars.Detect(img)
+
+		s.focusMu.Lock()
+		s.focusPath, s.focusMod, s.focusRes = path, info.ModTime(), res
+		s.focusMu.Unlock()
+	}
+
+	w.Header().Set("Cache-Control", "no-cache")
+	s.writeJSON(w, map[string]any{
+		"stars":      res.Count,
+		"fwhm":       res.MeanFWHM,
+		"file":       filepath.Base(path),
+		"frame_time": info.ModTime(),
+	})
 }
 
 // handleLatest serves the most recently captured image. Useful for embedding a

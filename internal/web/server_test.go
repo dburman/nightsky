@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -82,6 +83,54 @@ func TestOutput_ServesFullFile(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestFocus_ReturnsStarStats(t *testing.T) {
+	srv, dir := testServer(t)
+	writeTestPNG(t, filepath.Join(dir, "2026-06-10", "allsky-1.png"))
+	ts := httptest.NewServer(srv.routes())
+	defer ts.Close()
+
+	for i := 0; i < 2; i++ { // second hit exercises the mtime cache
+		resp, err := http.Get(ts.URL + "/api/focus")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body struct {
+			Stars int     `json:"stars"`
+			FWHM  float64 `json:"fwhm"`
+			File  string  `json:"file"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		if body.File != "allsky-1.png" {
+			t.Errorf("file = %q, want allsky-1.png", body.File)
+		}
+		// The gradient test image has no stars; the endpoint must still
+		// answer with zeros rather than erroring.
+		if body.Stars != 0 {
+			t.Errorf("stars = %d on a starless frame, want 0", body.Stars)
+		}
+	}
+}
+
+func TestFocus_NoImages(t *testing.T) {
+	srv, _ := testServer(t)
+	ts := httptest.NewServer(srv.routes())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL + "/api/focus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
 }
 

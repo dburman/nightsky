@@ -700,6 +700,7 @@ function renderConfig(cfg) {
       ['Skip Frames',       esc(m.skip_frames)],
       ['Denoise',           `<span class="mono">${esc(m.denoise)}</span>`],
       ['Metering Zone',     `<span class="badge blue">${esc(m.metering_zone || 'full')}</span>`],
+      ['Moon Boost',        m.moon_target_boost > 0 ? esc(m.moon_target_boost) : '—'],
       ['Save Raw (DNG)',    badge(m.save_raw)],
       ['Cooler',            badge(m.cooler_enabled)],
       ['Cooler Target',     m.cooler_enabled ? esc(m.cooler_target) + ' °C' : '—'],
@@ -773,6 +774,7 @@ function renderConfig(cfg) {
           ['Tune',      tl.tune ? `<span class="mono">${esc(tl.tune)}</span>` : '—'],
           ['GOP',       tl.gop > 0 ? esc(tl.gop) + ' frames' : '—'],
           ['Threads',   tl.threads > 0 ? esc(tl.threads) : '—'],
+          ['Thermal Limit', tl.thermal_limit_c > 0 ? esc(tl.thermal_limit_c) + ' °C' : '—'],
           ['Segments',  tl.segment_frames > 0 ? `every ${esc(tl.segment_frames)} frames` : 'end of night'],
           ['Deflicker', badge(tl.deflicker)],
         ])}
@@ -781,8 +783,21 @@ function renderConfig(cfg) {
       <div class="card">
         <div class="card-title">Keogram &amp; Star Trails</div>
         ${kv([
-          ['Keogram',     badge(cfg.output.keogram.enabled)],
-          ['Star Trails', badge(cfg.output.startrails.enabled)],
+          ['Keogram',      badge(cfg.output.keogram.enabled)],
+          ['Star Trails',  badge(cfg.output.startrails.enabled)],
+          ['Skip Moonlit', badge(cfg.output.startrails.skip_moonlit)],
+        ])}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Alerts</div>
+        ${kv([
+          ['Webhook',        cfg.alerts.webhook_url ? badge(true, 'set') : '—'],
+          ['Aurora',         badge(cfg.alerts.aurora.enabled)],
+          ['Ratio Threshold', cfg.alerts.aurora.enabled ? esc(cfg.alerts.aurora.ratio_threshold) : '—'],
+          ['Min Frames',      cfg.alerts.aurora.enabled ? esc(cfg.alerts.aurora.min_frames) : '—'],
+          ['Max Cloud',       cfg.alerts.aurora.enabled ? esc(cfg.alerts.aurora.max_cloud) : '—'],
+          ['Night Summary',  badge(cfg.alerts.night_summary)],
         ])}
       </div>
 
@@ -1247,6 +1262,10 @@ async function refreshLive() {
       ${metricRow('Gain',        `<span class="mono">${(m.gain || 0).toFixed(1)}</span>`)}
       ${metricRow('Brightness',  `<span class="mono">${(m.mean_brightness || 0).toFixed(1)}</span>`)}
       ${metricRow('Cloud cover', `<span class="mono">${cloudPct}%</span><span class="cloud-bar-wrap"><span class="cloud-bar" style="width:${cloudPct}%"></span></span>`)}
+      ${metricRow('Stars',       m.star_count ? `<span class="mono">${m.star_count}</span>` : '—')}
+      ${metricRow('Star FWHM',   m.star_fwhm ? `<span class="mono">${m.star_fwhm.toFixed(1)} px</span>` : '—')}
+      ${metricRow('Green ratio', m.green_ratio ? `<span class="mono">${m.green_ratio.toFixed(2)}</span>` : '—')}
+      ${metricRow('Moon',        moonRow(m))}
       ${metricRow('Sensor temp', m.sensor_temp_c ? `<span class="mono">${m.sensor_temp_c.toFixed(1)} °C</span>` : '—')}
       ${metricRow('Frames',      `<span class="mono">${(m.frame_count || 0).toLocaleString()}</span>`)}
       ${metricRow('Updated',     `<span class="mono">${timeSince(new Date(m.updated_at))}</span>`)}
@@ -1259,6 +1278,15 @@ async function refreshLive() {
     const ageEl = document.getElementById('live-age');
     if (ageEl) ageEl.textContent = '';
   }
+}
+
+function moonRow(m) {
+  if (typeof m.moon_altitude !== 'number') return '—';
+  const illum = Math.round((m.moon_illumination || 0) * 100);
+  const state = m.moon_altitude > 0
+    ? `up ${m.moon_altitude.toFixed(0)}°`
+    : 'down';
+  return `<span class="mono">${state} · ${illum}%</span>`;
 }
 
 function metricRow(label, value) {
