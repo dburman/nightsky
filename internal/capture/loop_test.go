@@ -3,8 +3,11 @@ package capture
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/dburman/nightsky/internal/cloud"
 )
 
 func TestSweepStaleTmp(t *testing.T) {
@@ -53,6 +56,39 @@ func TestStaleLimit(t *testing.T) {
 	for _, c := range cases {
 		if got := staleLimit(c.delay); got != c.want {
 			t.Errorf("staleLimit(%v) = %v, want %v", c.delay, got, c.want)
+		}
+	}
+}
+
+func TestNightSummaryMessage(t *testing.T) {
+	base := time.Date(2026, 7, 28, 22, 0, 0, 0, time.UTC)
+	ms := []cloud.Metric{
+		{Timestamp: base, Coverage: 0.1, StarCount: 120},
+		{Timestamp: base.Add(4 * time.Hour), Coverage: 0.2, StarCount: 340},
+		{Timestamp: base.Add(8 * time.Hour), Coverage: 0.9, StarCount: 0},
+	}
+	msg := nightSummaryMessage("2026-07-28", ms, 2, "http://astrocam:8080/")
+
+	for _, want := range []string{
+		"Night 2026-07-28: 3 frames",
+		"over 8h0m0s",
+		"Peak stars: 340",
+		"Aurora alerts: 2",
+		"http://astrocam:8080",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("summary missing %q in: %s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "8080/") {
+		t.Errorf("trailing slash not trimmed: %s", msg)
+	}
+
+	// No stars / no aurora / no URL → those clauses are absent.
+	quiet := nightSummaryMessage("2026-07-28", ms[:1], 0, "")
+	for _, absent := range []string{"Peak stars", "Aurora", "http"} {
+		if strings.Contains(quiet, absent) {
+			t.Errorf("quiet summary should not contain %q: %s", absent, quiet)
 		}
 	}
 }

@@ -93,8 +93,9 @@ type Loop struct {
 	// summaries. A nil notifier disables both.
 	Notifier *alerts.Notifier
 
-	auroraDet *alerts.AuroraDetector // nil unless aurora alerting is enabled
-	lastStars stars.Result           // most recent star detection, for metrics
+	auroraDet    *alerts.AuroraDetector // nil unless aurora alerting is enabled
+	lastStars    stars.Result           // most recent star detection, for metrics
+	auroraEvents int                    // alerts fired this night, for the summary
 }
 
 // NewLoop creates a new capture loop.
@@ -196,8 +197,10 @@ func (l *Loop) Run(ctx context.Context) error {
 				if l.nightSessionDir != "" {
 					nightDir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
 					nightMetrics := l.cloudMetrics
+					auroraEvents := l.auroraEvents
 					segWg := l.segmentWg
 					l.cloudMetrics = nil
+					l.auroraEvents = 0
 
 					l.nightEndWg.Add(1)
 					go func() {
@@ -218,6 +221,15 @@ func (l *Loop) Run(ctx context.Context) error {
 						segWg.Wait()
 						if l.OnNightEnd != nil {
 							l.OnNightEnd(nightDir)
+						}
+						// Summary goes out after processing so the timelapse
+						// and keogram it points at already exist.
+						if l.cfg.Alerts.NightSummary {
+							date := filepath.Base(nightDir)
+							msg := nightSummaryMessage(date, nightMetrics, auroraEvents, l.cfg.Alerts.BaseURL)
+							if err := l.Notifier.Send(ctx, "Night summary "+date, msg); err != nil {
+								l.logger.Error("night summary delivery failed", "error", err)
+							}
 						}
 					}()
 				}
@@ -650,6 +662,35 @@ func (l *Loop) calibrateRaw(result *camera.CaptureResult, modeCfg config.ModeCon
 	return rgb, mean, nil
 }
 
+// nightSummaryMessage composes the dawn notification from the night's sky
+// metrics.
+func nightSummaryMessage(date string, ms []cloud.Metric, auroraEvents int, baseURL string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Night %s: %d frames", date, len(ms))
+	if len(ms) > 1 {
+		span := ms[len(ms)-1].Timestamp.Sub(ms[0].Timestamp).Round(time.Minute)
+		fmt.Fprintf(&b, " over %s", span)
+	}
+	fmt.Fprintf(&b, ". %s.", cloud.SummaryLine(ms))
+
+	peakStars := 0
+	for _, m := range ms {
+		if m.StarCount > peakStars {
+			peakStars = m.StarCount
+		}
+	}
+	if peakStars > 0 {
+		fmt.Fprintf(&b, " Peak stars: %d.", peakStars)
+	}
+	if auroraEvents > 0 {
+		fmt.Fprintf(&b, " Aurora alerts: %d.", auroraEvents)
+	}
+	if baseURL != "" {
+		fmt.Fprintf(&b, " %s", strings.TrimRight(baseURL, "/"))
+	}
+	return b.String()
+}
+
 // sendAuroraAlert delivers an aurora notification in the background.
 func (l *Loop) sendAuroraAlert(ctx context.Context, m cloud.Metric) {
 	msg := fmt.Sprintf("Possible aurora at %s — green ratio %.2f, cloud %.0f%%, %d stars visible.",
@@ -657,6 +698,7 @@ func (l *Loop) sendAuroraAlert(ctx context.Context, m cloud.Metric) {
 	if base := l.cfg.Alerts.BaseURL; base != "" {
 		msg += " Live view: " + strings.TrimRight(base, "/") + "/latest"
 	}
+	l.auroraEvents++
 	l.logger.Info("aurora alert triggered", "green_ratio", m.GreenRatio, "cloud", m.Coverage)
 	go func() {
 		if err := l.Notifier.Send(ctx, "Possible aurora", msg); err != nil {
