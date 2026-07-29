@@ -85,7 +85,8 @@ func TestNightSummaryMessage(t *testing.T) {
 	}
 
 	// No stars / no aurora / no URL → those clauses are absent.
-	quiet := nightSummaryMessage("2026-07-28", ms[:1], 0, "")
+	cloudyOnly := []cloud.Metric{{Timestamp: base, Coverage: 0.9, StarCount: 0}}
+	quiet := nightSummaryMessage("2026-07-28", cloudyOnly, 0, "")
 	for _, absent := range []string{"Peak stars", "Aurora", "http"} {
 		if strings.Contains(quiet, absent) {
 			t.Errorf("quiet summary should not contain %q: %s", absent, quiet)
