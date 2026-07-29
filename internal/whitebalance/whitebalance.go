@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	_ "golang.org/x/image/webp" // WebP-converted nights must stay analysable
 )
 
 const maxSamples = 100
@@ -66,7 +68,8 @@ func Analyze(dir string, settings ModeSettings) (*Result, error) {
 		if strings.HasPrefix(lower, "keogram-") || strings.HasPrefix(lower, "startrails-") {
 			continue
 		}
-		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") {
+		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||
+			strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".webp") {
 			files = append(files, filepath.Join(dir, e.Name()))
 		}
 	}
