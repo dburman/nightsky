@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dburman/nightsky/internal/alerts"
+	"github.com/dburman/nightsky/internal/astro"
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/camera/libcamera"
 	"github.com/dburman/nightsky/internal/capture"
@@ -634,6 +635,25 @@ func analyzeCmd() *cobra.Command {
 	return cmd
 }
 
+// nightWasMoonlit reports whether the night that began on dateDir's date had
+// the moon above the horizon for most of it while more than ~40% illuminated
+// — conditions under which star trails wash out. Unparseable dates or polar
+// day/night report false, so generation proceeds as usual.
+func nightWasMoonlit(dateDir string, cfg *config.Config, logger *slog.Logger) bool {
+	date, err := time.ParseInLocation("2006-01-02", filepath.Base(dateDir), time.Local)
+	if err != nil {
+		return false
+	}
+	start, end, ok := astro.NightWindow(date, cfg.Location.Latitude, cfg.Location.Longitude, cfg.Location.Angle)
+	if !ok {
+		return false
+	}
+	upFrac := astro.MoonUpFraction(start, end, cfg.Location.Latitude, cfg.Location.Longitude)
+	illum := astro.MoonPhase(start.Add(end.Sub(start) / 2))
+	logger.Debug("moonlit-night check", "up_fraction", upFrac, "illumination", illum)
+	return upFrac > 0.5 && illum > 0.4
+}
+
 // Per-step time budgets for end-of-night processing. Generous — they exist to
 // unstick a hung step, not to police slow ones.
 const (
@@ -691,10 +711,14 @@ func runNightEndProcessing(
 	}
 
 	if cfg.Output.StarTrails.Enabled {
-		step("star trails generation", nightEndStepTimeout, func(c context.Context) error {
-			_, err := startrails.Generate(c, dateDir, startrails.DefaultMaxMeanBrightness, logger)
-			return err
-		})
+		if cfg.Output.StarTrails.SkipMoonlit && nightWasMoonlit(dateDir, cfg, logger) {
+			logger.Info("skipping star trails: moonlit night", "dir", dateDir)
+		} else {
+			step("star trails generation", nightEndStepTimeout, func(c context.Context) error {
+				_, err := startrails.Generate(c, dateDir, startrails.DefaultMaxMeanBrightness, logger)
+				return err
+			})
+		}
 	}
 
 	// White balance analysis.

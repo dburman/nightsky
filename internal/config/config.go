@@ -201,6 +201,11 @@ type KeogramConfig struct {
 type StarTrailsConfig struct {
 	// Enabled generates a star trails image at end of night (default true).
 	Enabled bool `mapstructure:"enabled" json:"enabled"`
+	// SkipMoonlit skips generation when the moon was up for most of the
+	// night and more than ~40% illuminated — moonlight washes out trails,
+	// and skipping is an informed decision instead of a brightness-filter
+	// failure.
+	SkipMoonlit bool `mapstructure:"skip_moonlit" json:"skip_moonlit"`
 }
 
 // StretchConfig controls histogram stretching applied to saved images.
@@ -450,6 +455,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)
+	v.SetDefault("output.startrails.skip_moonlit", false)
 
 	v.SetDefault("output.webp.enabled", false)
 	v.SetDefault("output.webp.quality", 85)
