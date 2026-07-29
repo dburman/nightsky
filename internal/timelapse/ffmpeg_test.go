@@ -129,6 +129,38 @@ func TestFromConfig_MapsAllFields(t *testing.T) {
 	}
 }
 
+// A PNG/WebP mix (partially converted night) must reduce to the dominant
+// format in order, not feed a mixed list to the concat demuxer.
+func TestDominantFormat(t *testing.T) {
+	mixed := []string{
+		"a-01.webp", "a-02.webp", // early frames converted by an earlier run
+		"a-03.png", "a-04.png", "a-05.png", "a-06.png",
+	}
+	kept, dropped := dominantFormat(mixed)
+	if dropped != 2 || len(kept) != 4 {
+		t.Fatalf("kept %d dropped %d, want 4/2", len(kept), dropped)
+	}
+	for i, want := range []string{"a-03.png", "a-04.png", "a-05.png", "a-06.png"} {
+		if kept[i] != want {
+			t.Errorf("kept[%d] = %s, want %s", i, kept[i], want)
+		}
+	}
+
+	// jpg and jpeg are the same codec family — not a mix.
+	jpgs := []string{"a.jpg", "b.jpeg", "c.jpg"}
+	if kept, dropped := dominantFormat(jpgs); dropped != 0 || len(kept) != 3 {
+		t.Errorf("jpg/jpeg treated as mixed: kept %d dropped %d", len(kept), dropped)
+	}
+
+	// Homogeneous list passes through untouched.
+	if _, dropped := dominantFormat([]string{"a.png", "b.png"}); dropped != 0 {
+		t.Errorf("homogeneous list dropped %d", dropped)
+	}
+	if kept, dropped := dominantFormat(nil); kept != nil || dropped != 0 {
+		t.Error("nil list should be a no-op")
+	}
+}
+
 func TestConcatListEntry_EscapesQuotes(t *testing.T) {
 	got := concatListEntry("it's-allsky-1.jpg")
 	want := `file 'it'\''s-allsky-1.jpg'` + "\n"

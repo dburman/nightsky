@@ -87,6 +87,11 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 	if len(images) == 0 {
 		return "", fmt.Errorf("no images found in %s", imageDir)
 	}
+	if kept, dropped := dominantFormat(images); dropped > 0 {
+		logger.Warn("mixed image formats in directory; encoding dominant format only",
+			"kept", len(kept), "dropped", dropped)
+		images = kept
+	}
 
 	logger.Info("generating timelapse",
 		"dir", imageDir,
@@ -126,6 +131,11 @@ func GenerateSegment(ctx context.Context, dir string, segIdx int, segmentFrames 
 	images, err := collectImages(dir)
 	if err != nil {
 		return "", fmt.Errorf("collect images: %w", err)
+	}
+	if kept, dropped := dominantFormat(images); dropped > 0 {
+		logger.Warn("mixed image formats in directory; encoding dominant format only",
+			"kept", len(kept), "dropped", dropped)
+		images = kept
 	}
 
 	start := segIdx * segmentFrames
@@ -170,6 +180,11 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 	}
 	if len(images) == 0 {
 		return "", fmt.Errorf("no images found in %s", dir)
+	}
+	if kept, dropped := dominantFormat(images); dropped > 0 {
+		logger.Warn("mixed image formats in directory; encoding dominant format only",
+			"kept", len(kept), "dropped", dropped)
+		images = kept
 	}
 
 	removeStaleTmp(dir, logger)
@@ -473,6 +488,47 @@ func removeStaleTmp(dir string, logger *slog.Logger) {
 			logger.Info("removed stale timelapse temp file", "path", path)
 		}
 	}
+}
+
+// codecClass maps an image filename to the ffmpeg decoder family it needs.
+func codecClass(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "mjpeg"
+	case ".png":
+		return "png"
+	case ".webp":
+		return "webp"
+	}
+	return "other"
+}
+
+// dominantFormat filters images to the single most numerous codec family,
+// preserving order. The concat demuxer locks one decoder onto the whole
+// stream (probed from the first file), so a directory holding a PNG/WebP mix
+// — e.g. a partially WebP-converted night that then captured more PNGs —
+// makes every off-format frame fail with "missing RIFF tag" and ruins the
+// encode. Returns the kept list and how many frames were dropped.
+func dominantFormat(images []string) (kept []string, dropped int) {
+	counts := map[string]int{}
+	for _, img := range images {
+		counts[codecClass(img)]++
+	}
+	best := ""
+	for class, n := range counts {
+		if best == "" || n > counts[best] {
+			best = class
+		}
+	}
+	if len(counts) <= 1 {
+		return images, 0
+	}
+	for _, img := range images {
+		if codecClass(img) == best {
+			kept = append(kept, img)
+		}
+	}
+	return kept, len(images) - len(kept)
 }
 
 // allWebP returns true when every image in the list is a WebP file. Used to
