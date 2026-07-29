@@ -14,18 +14,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## 1. Aurora / sky-anomaly alerting
 
-- [ ] **Green-channel sky metric per frame**
+- [x] **Green-channel sky metric per frame**
   Aurora reads as a broad green (557.7 nm) glow. Compute mean G/(R+B) over
   the sky region per night frame — a few lines beside the existing cloud
   metric in `internal/cloud` (or a new `internal/skymetrics`). Store in the
   same per-frame metric stream and the nightly CSV.
-- [ ] **Baseline + spike detection**
+- [x] **Baseline + spike detection**
   Rolling median of the green ratio over the last ~30 frames; flag when the
   current frame exceeds baseline by a configurable factor AND cloud coverage
   is low (clouds + light pollution also skew green). Debounce: require N
   consecutive anomalous frames before alerting, one alert per night max
   unless it clears and re-triggers.
-- [ ] **Push notification**
+- [x] **Push notification**
   Simple webhook POST (ntfy.sh works with zero infrastructure: one URL,
   phone app) with the trigger frame's `/latest` URL. Config block:
   `alerts: { webhook_url, aurora: { enabled, ratio_threshold, min_frames } }`.
@@ -35,25 +35,27 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## 2. Moon awareness
 
-- [ ] **Moon position + phase in `internal/astro`**
+- [x] **Moon position + phase in `internal/astro`**
   Add `MoonPosition(t, lat, lon)` (alt/az) and `MoonPhase(t)` (illuminated
   fraction) using standard low-precision algorithms (Meeus truncated series —
   ~0.3° accuracy is ample). Pure functions, unit-testable against known
   ephemeris values.
-- [ ] **Moon-compensated auto-exposure**
+- [x] **Moon-compensated auto-exposure**
   When the moon is up and >40% illuminated, raise the night target
   brightness proportionally (config: `night.moon_target_boost`) so
   auto-exposure stops fighting moonlight with maximum gain.
-- [ ] **Moon-aware star trails + keogram annotation**
+- [x] **Moon-aware star trails + keogram annotation**
   Skip star-trails generation when the moon was up for most of the night
   (replaces the crude brightness-threshold failure with an informed
   decision and a clear log line). Annotate the keogram/WB report with
   moonrise/moonset times and phase.
-- [ ] **Dashboard**: moon phase + rise/set on the Configuration or Live tab.
+  _Partial: the `skip_moonlit` gate is done; keogram/WB-report moonrise/set
+  annotation is still open._
+- [x] **Dashboard**: moon phase + rise/set on the Configuration or Live tab.
 
 ## 3. Star count / sky quality metric + focus aid
 
-- [ ] **Star detection on night frames**
+- [x] **Star detection on night frames**
   Local-maxima count above background on the stretched grayscale frame
   (threshold = median + k·MAD, 3×3 maxima, minimum separation). Runs on the
   already-decoded frame in the capture loop every Nth frame; count stored in
@@ -62,20 +64,22 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
   Star count vs. time plot per night (aligns with the keogram); a
   transparency/quality score per night in the captures list — answers "was
   Tuesday actually clear?" at a glance.
-- [ ] **Live focus aid in the web UI**
+- [x] **Live focus aid in the web UI**
   Focus mode on the Live tab: zoomed center crop + live star count + mean
   star FWHM (sharpness). Maximize stars / minimize FWHM while turning the
   lens. All-sky lenses are notoriously hard to focus; this makes it a
   2-minute job. Needs a lightweight `/api/focus` endpoint sampling the
   latest frame.
+  _Partial: `/api/focus` and live stars/FWHM rows are done; a dedicated
+  zoomed-crop focus mode on the Live tab is still open._
 
 ## 4. Nightly summary + notification
 
-- [ ] **Best-frames selection at dawn**
+- [x] **Best-frames selection at dawn**
   Rank the night's frames by star count (high), cloud coverage (low), and
   pick the top N as `highlights-YYYY-MM-DD/` symlinks or a JSON manifest the
   web UI renders as a "Highlights" strip on the Captures tab.
-- [ ] **Dawn summary webhook**
+- [x] **Dawn summary webhook**
   One message after end-of-night processing: frames captured, hours of
   clear sky (from cloud metrics), min/max sensor temp, star-count peak,
   aurora events if any, plus keogram thumbnail and timelapse link. Same

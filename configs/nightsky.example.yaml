@@ -83,6 +83,10 @@ night:
   # DNG preserves full sensor bit depth and Bayer pattern for post-processing
   # in Lightroom, darktable, RawTherapee, etc. DNGs are kept during raw prune.
   save_raw: false
+  # Raise the auto-exposure target while the moon is up, proportionally to
+  # its illuminated fraction: target × (1 + boost × illumination). Stops the
+  # controller fighting moonlight with maximum gain. 0 = off; try 0.5.
+  moon_target_boost: 0.0
   # ZWO cooler settings (ignored for RPi cameras)
   cooler_enabled: false
   cooler_target: -10
@@ -154,6 +158,9 @@ output:
     enabled: true
   startrails:
     enabled: true
+    # Skip generation when the moon was up most of the night and >40%
+    # illuminated (moonlight washes out trails). Default off.
+    skip_moonlit: false
 
   timelapse:
     enabled: true
@@ -235,3 +242,19 @@ flat:
   directory: ./flats
   # Number of flat frames to average into the master flat
   count: 10
+
+# Push notifications via webhook. The wire format is ntfy-compatible (message
+# body + Title header): create a topic at https://ntfy.sh, put its URL here,
+# and install the ntfy app to receive alerts on your phone.
+alerts:
+  webhook_url: ""            # e.g. https://ntfy.sh/my-secret-astrocam-topic
+  base_url: ""               # optional, for links in messages, e.g. http://astrocam:8080
+  # Send a dawn summary: frames, clear-sky stats, peak stars, aurora events.
+  night_summary: false
+  # Aurora detection: alerts when the sky's green ratio exceeds its rolling
+  # baseline for several consecutive clear frames. One alert per surge.
+  aurora:
+    enabled: false
+    ratio_threshold: 1.3     # green ratio must exceed baseline × this
+    min_frames: 3            # consecutive anomalous frames before alerting
+    max_cloud: 0.5           # suppress detection above this cloud coverage

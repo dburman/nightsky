@@ -26,6 +26,10 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives black/white points from configurable percentiles of frame luminance (default 10th/99.9th — tuned for dark skies); manual mode accepts explicit values. Does not affect dark/flat calibration.
 - **GPS auto-location** — Automatically fetches latitude/longitude from a local `gpsd` daemon at startup (requires `gpsd`), overriding config coordinates. Falls back gracefully to configured values if no fix is available.
 - **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs.
+- **Aurora alerting** — Watches the sky's green ratio against a rolling baseline and pushes a webhook notification (ntfy-compatible) when a sustained green excess appears under clear skies. One alert per surge, re-armed after quiet.
+- **Moon awareness** — Built-in lunar position/phase math: optionally raises the auto-exposure target while the moon is up (`moon_target_boost`), skips star trails on bright moonlit nights (`skip_moonlit`), and reports moon state in the live metrics.
+- **Star metrics + focus aid** — Counts point sources and measures their sharpness (FWHM) on night frames; logged to the nightly CSV, shown live in the web UI, and served on demand at `/api/focus` for focusing the lens (maximize stars, minimize FWHM).
+- **Night summary & highlights** — Optional dawn notification with the night's statistics, plus an automatic top-5 highlight frame selection (stars × clear sky) rendered as a strip in the web gallery.
 - **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in external dashboards.
 - **Live metrics endpoint** — `GET /api/metrics` returns the current capture state as JSON (mode, exposure, gain, mean brightness, cloud coverage, sensor temperature, frame count). Written to `.metrics.json` after every frame so it works across process boundaries in Docker Compose and systemd split-service deployments.
 - **Web UI** — Built-in HTTP server (`nightsky serve`) with Configuration, Captures, and Live tabs. Captures tab: browse by date with Video, Keogram, Star Trails, and Images sub-tabs, paginated lazy-loaded thumbnails. Live tab: auto-refreshing current frame with real-time metrics sidebar (exposure, gain, brightness, cloud coverage bar, sensor temperature). No external dependencies, embedded in the binary.
@@ -452,6 +456,22 @@ upload:
 
 S3 credentials are resolved via the standard AWS credential chain (environment variables, `~/.aws/credentials`, IAM role, etc.).
 
+### Alerts
+
+```yaml
+alerts:
+  webhook_url: https://ntfy.sh/my-secret-topic   # empty = alerts disabled
+  base_url: http://astrocam:8080                 # optional, for links in messages
+  night_summary: true    # dawn message: frames, clear-sky stats, peak stars, aurora events
+  aurora:
+    enabled: true
+    ratio_threshold: 1.3 # green ratio must exceed its rolling baseline × this
+    min_frames: 3        # consecutive anomalous frames before alerting
+    max_cloud: 0.5       # suppress detection above this cloud coverage
+```
+
+The wire format is ntfy-compatible (message body + `Title` header): create a topic at [ntfy.sh](https://ntfy.sh), put its URL in `webhook_url`, and install the ntfy phone app — "possible aurora" pushes arrive within seconds of detection. Any endpoint that accepts a plain HTTP POST works. The webhook URL is redacted in `/api/config` since ntfy topics are effectively secrets.
+
 ### Dark frames
 
 ```yaml
@@ -553,7 +573,8 @@ HTTP API endpoints:
 | Endpoint | Description |
 |---|---|
 | `GET /latest` | Most recent captured image; `?w=N` resizes |
-| `GET /api/metrics` | Live capture state as JSON (mode, exposure, gain, brightness, cloud coverage, temp, frame count) |
+| `GET /api/metrics` | Live capture state as JSON (mode, exposure, gain, brightness, cloud coverage, stars, moon, temp, frame count) |
+| `GET /api/focus` | Star count + mean FWHM of the latest frame (live focus aid; cached per frame) |
 | `GET /api/captures` | List of capture date directories |
 | `GET /api/captures/{date}/images` | Images, video, keogram, star trails for a date |
 | `GET /api/config` | Current configuration as JSON |
