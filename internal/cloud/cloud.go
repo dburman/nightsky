@@ -14,26 +14,37 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	imgutil "github.com/dburman/nightsky/internal/image"
 )
 
-// Metric holds cloud coverage statistics for a single frame.
+// Metric holds sky statistics for a single frame.
 type Metric struct {
-	Timestamp  time.Time
-	Mean       float64 // mean luminance of sky region (0–255)
-	StdDev     float64 // standard deviation of luminance (0–255)
-	Coverage   float64 // estimated cloud coverage 0.0–1.0
+	Timestamp time.Time
+	Mean      float64 // mean luminance of sky region (0–255)
+	StdDev    float64 // standard deviation of luminance (0–255)
+	Coverage  float64 // estimated cloud coverage 0.0–1.0
+	// GreenRatio is mean G divided by mean (R+B)/2 over the sky region.
+	// Aurora (557.7 nm emission) reads as a broad green excess; ~1.0 is
+	// neutral. Used by the aurora detector.
+	GreenRatio float64
+	// StarCount and StarFWHM are filled by the capture loop from the star
+	// detector (0 when not computed for this frame).
+	StarCount int
+	StarFWHM  float64
 }
 
 // Estimate computes a cloud coverage metric from img.
 // It samples the center 50% radius circle (zenith for all-sky cameras).
 func Estimate(img image.Image, ts time.Time) Metric {
-	mean, stddev := centerStats(img)
+	mean, stddev, greenRatio := centerStats(img)
 	coverage := estimateCoverage(mean, stddev)
 	return Metric{
-		Timestamp: ts,
-		Mean:      mean,
-		StdDev:    stddev,
-		Coverage:  coverage,
+		Timestamp:  ts,
+		Mean:       mean,
+		StdDev:     stddev,
+		Coverage:   coverage,
+		GreenRatio: greenRatio,
 	}
 }
 
@@ -49,32 +60,39 @@ func estimateCoverage(mean, stddev float64) float64 {
 	return math.Min(score, 1.0)
 }
 
-// centerStats returns the mean and standard deviation of luminance in the
-// inner 50%-radius circle. Samples every 4th pixel for speed.
-func centerStats(img image.Image) (mean, stddev float64) {
-	b := img.Bounds()
-	cx := float64(b.Min.X+b.Max.X) / 2
-	cy := float64(b.Min.Y+b.Max.Y) / 2
-	r := float64(min(b.Dx(), b.Dy())) * 0.5
+// centerStats returns the mean and standard deviation of luminance plus the
+// green-excess ratio in the inner 50%-radius circle, sampling every 4th pixel
+// over the packed RGBA buffer.
+func centerStats(img image.Image) (mean, stddev, greenRatio float64) {
+	rgba := imgutil.ToRGBA(img)
+	w, h := rgba.Bounds().Dx(), rgba.Bounds().Dy()
+	cx, cy := float64(w)/2, float64(h)/2
+	radius := float64(min(w, h)) * 0.5
+	pix := rgba.Pix
 
-	var sum, sumSq float64
+	var sum, sumSq, sumR, sumG, sumB float64
 	var count int
-	for y := b.Min.Y; y < b.Max.Y; y += 4 {
+	for y := 0; y < h; y += 4 {
 		dy := float64(y) - cy
-		for x := b.Min.X; x < b.Max.X; x += 4 {
+		row := y * rgba.Stride
+		for x := 0; x < w; x += 4 {
 			dx := float64(x) - cx
-			if math.Sqrt(dx*dx+dy*dy) > r {
+			if dx*dx+dy*dy > radius*radius {
 				continue
 			}
-			rv, g, bl, _ := img.At(x, y).RGBA()
-			lum := 0.299*float64(rv>>8) + 0.587*float64(g>>8) + 0.114*float64(bl>>8)
+			i := row + x*4
+			r, g, b := float64(pix[i]), float64(pix[i+1]), float64(pix[i+2])
+			lum := 0.299*r + 0.587*g + 0.114*b
 			sum += lum
 			sumSq += lum * lum
+			sumR += r
+			sumG += g
+			sumB += b
 			count++
 		}
 	}
 	if count == 0 {
-		return 0, 0
+		return 0, 0, 1
 	}
 	mean = sum / float64(count)
 	variance := sumSq/float64(count) - mean*mean
@@ -82,7 +100,14 @@ func centerStats(img image.Image) (mean, stddev float64) {
 		variance = 0
 	}
 	stddev = math.Sqrt(variance)
-	return mean, stddev
+
+	denom := (sumR + sumB) / 2
+	if denom < 1 {
+		greenRatio = 1 // too dark to measure; neutral
+	} else {
+		greenRatio = sumG / denom
+	}
+	return mean, stddev, greenRatio
 }
 
 // WriteReport appends metrics to a CSV report file in dir.
@@ -107,12 +132,12 @@ func WriteReport(dir string, metrics []Metric) error {
 
 	w := bufio.NewWriter(f)
 	if needHeader {
-		fmt.Fprintln(w, "timestamp,mean,stddev,coverage")
+		fmt.Fprintln(w, "timestamp,mean,stddev,coverage,green_ratio,stars,fwhm")
 	}
 	for _, m := range metrics {
-		fmt.Fprintf(w, "%s,%.2f,%.2f,%.3f\n",
+		fmt.Fprintf(w, "%s,%.2f,%.2f,%.3f,%.3f,%d,%.2f\n",
 			m.Timestamp.Format("2006-01-02T15:04:05"),
-			m.Mean, m.StdDev, m.Coverage,
+			m.Mean, m.StdDev, m.Coverage, m.GreenRatio, m.StarCount, m.StarFWHM,
 		)
 	}
 	return w.Flush()
