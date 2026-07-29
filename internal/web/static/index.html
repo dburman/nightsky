@@ -978,7 +978,7 @@ function renderDateContent(date) {
   if (!data) { el.innerHTML = '<div class="spinner"></div>'; return; }
 
   if (activeSub === 'images') {
-    renderImages(el, data.images || []);
+    renderImages(el, data.images || [], data.highlights || []);
   } else if (activeSub === 'keogram') {
     renderKeogram(el, data.keogram, date);
   } else if (activeSub === 'startrails') {
@@ -1028,7 +1028,7 @@ function attachThumbObserver(container) {
   container.querySelectorAll('[data-src]').forEach(el => thumbObs.observe(el));
 }
 
-function renderImages(container, images) {
+function renderImages(container, images, highlights) {
   if (images.length === 0) {
     container.innerHTML = `<div class="empty"><div class="empty-icon">📷</div>No images for this date.</div>`;
     return;
@@ -1036,10 +1036,31 @@ function renderImages(container, images) {
 
   lbImages = images;
   thumbObs = null;
+  container.innerHTML = '';
+
+  // Highlights strip: the night's best frames by stars × clear sky.
+  if (highlights && highlights.length > 0) {
+    const strip = document.createElement('div');
+    strip.innerHTML = `<div class="card-title" style="margin-top:4px">Highlights</div>`;
+    const hlGrid = document.createElement('div');
+    hlGrid.className = 'img-grid';
+    hlGrid.style.marginBottom = '20px';
+    highlights.forEach(hl => {
+      const idx = images.findIndex(img => img.name === hl.name);
+      const cell = document.createElement('div');
+      cell.className = 'img-cell';
+      if (idx >= 0) cell.onclick = () => lbOpen(idx);
+      cell.innerHTML = `
+        <img src="${esc(hl.thumb_url)}" alt="" class="loaded" style="opacity:1">
+        <div class="img-overlay" style="opacity:1">${esc(hl.time)} · ${hl.stars}★ · ${Math.round(hl.cloud * 100)}%☁</div>`;
+      hlGrid.appendChild(cell);
+    });
+    strip.appendChild(hlGrid);
+    container.appendChild(strip);
+  }
 
   const grid = document.createElement('div');
   grid.className = 'img-grid';
-  container.innerHTML = '';
   container.appendChild(grid);
 
   let loaded = 0;

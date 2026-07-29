@@ -32,6 +32,10 @@ type Metric struct {
 	// detector (0 when not computed for this frame).
 	StarCount int
 	StarFWHM  float64
+	// File is the saved frame's filename (no directory), filled by the
+	// capture loop; used to build the nightly highlights manifest. Not
+	// written to the CSV.
+	File string
 }
 
 // Estimate computes a cloud coverage metric from img.

@@ -204,12 +204,55 @@ type imageEntry struct {
 	Time     string `json:"time"`
 }
 
+type highlightEntry struct {
+	Name     string  `json:"name"`
+	URL      string  `json:"url"`
+	ThumbURL string  `json:"thumb_url"`
+	Time     string  `json:"time"`
+	Stars    int     `json:"stars"`
+	Cloud    float64 `json:"cloud"`
+}
+
 type dateImagesResponse struct {
-	Date       string       `json:"date"`
-	Images     []imageEntry `json:"images"`
-	Video      string       `json:"video,omitempty"`
-	Keogram    string       `json:"keogram,omitempty"`
-	StarTrails string       `json:"startrails,omitempty"`
+	Date       string           `json:"date"`
+	Images     []imageEntry     `json:"images"`
+	Highlights []highlightEntry `json:"highlights,omitempty"`
+	Video      string           `json:"video,omitempty"`
+	Keogram    string           `json:"keogram,omitempty"`
+	StarTrails string           `json:"startrails,omitempty"`
+}
+
+// loadHighlights reads the night's highlights manifest, returning nil when
+// absent or unreadable.
+func loadHighlights(dirPath, date string) []highlightEntry {
+	data, err := os.ReadFile(filepath.Join(dirPath, "highlights-"+date+".json"))
+	if err != nil {
+		return nil
+	}
+	var manifest struct {
+		Frames []struct {
+			File  string  `json:"file"`
+			Time  string  `json:"time"`
+			Stars int     `json:"stars"`
+			Cloud float64 `json:"cloud"`
+		} `json:"frames"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil
+	}
+	var out []highlightEntry
+	for _, f := range manifest.Frames {
+		url := "/output/" + date + "/" + f.File
+		out = append(out, highlightEntry{
+			Name:     f.File,
+			URL:      url,
+			ThumbURL: url + "?w=" + strconv.Itoa(imgutil.ThumbWidth),
+			Time:     f.Time,
+			Stars:    f.Stars,
+			Cloud:    f.Cloud,
+		})
+	}
+	return out
 }
 
 func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +323,7 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 	resp := dateImagesResponse{
 		Date:       date,
 		Images:     images,
+		Highlights: loadHighlights(dirPath, date),
 		Video:      videoURL,
 		Keogram:    keogramURL,
 		StarTrails: startrailsURL,

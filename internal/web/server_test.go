@@ -120,6 +120,40 @@ func TestFocus_ReturnsStarStats(t *testing.T) {
 	}
 }
 
+func TestDateImages_IncludesHighlights(t *testing.T) {
+	srv, dir := testServer(t)
+	writeTestPNG(t, filepath.Join(dir, "2026-06-10", "allsky-1.png"))
+	manifest := `{"date":"2026-06-10","frames":[{"file":"allsky-1.png","time":"01:23:45","stars":210,"cloud":0.1}]}`
+	if err := os.WriteFile(filepath.Join(dir, "2026-06-10", "highlights-2026-06-10.json"), []byte(manifest), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(srv.routes())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/captures/2026-06-10/images")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Highlights []struct {
+			Name  string `json:"name"`
+			URL   string `json:"url"`
+			Stars int    `json:"stars"`
+		} `json:"highlights"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Highlights) != 1 {
+		t.Fatalf("highlights = %d, want 1", len(body.Highlights))
+	}
+	h := body.Highlights[0]
+	if h.Name != "allsky-1.png" || h.Stars != 210 || h.URL != "/output/2026-06-10/allsky-1.png" {
+		t.Errorf("unexpected highlight: %+v", h)
+	}
+}
+
 func TestFocus_NoImages(t *testing.T) {
 	srv, _ := testServer(t)
 	ts := httptest.NewServer(srv.routes())

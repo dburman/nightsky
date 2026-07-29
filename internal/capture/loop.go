@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"log/slog"
@@ -222,6 +223,9 @@ func (l *Loop) Run(ctx context.Context) error {
 						if l.OnNightEnd != nil {
 							l.OnNightEnd(nightDir)
 						}
+						// Highlights come after processing so filenames
+						// survive WebP conversion.
+						writeHighlights(nightDir, nightMetrics, l.logger)
 						// Summary goes out after processing so the timelapse
 						// and keogram it points at already exist.
 						if l.cfg.Alerts.NightSummary {
@@ -391,6 +395,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			m.StarCount = l.lastStars.Count
 			m.StarFWHM = l.lastStars.MeanFWHM
+			m.File = frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
 
 			l.cloudMetrics = append(l.cloudMetrics, m)
 
@@ -420,11 +425,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 
-		filename := fmt.Sprintf("%s-%s.%s",
-			l.cfg.Output.FilenamePrefix,
-			result.Meta.Timestamp.Format("20060102150405"),
-			modeCfg.ImageType,
-		)
+		filename := frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
 		outputPath := filepath.Join(outputDir, filename)
 
 		data, err := imgutil.EncodeImage(processedImg, modeCfg.ImageType, modeCfg.Quality)
@@ -660,6 +661,90 @@ func (l *Loop) calibrateRaw(result *camera.CaptureResult, modeCfg config.ModeCon
 		Gamma:  2.2,
 	})
 	return rgb, mean, nil
+}
+
+// frameFilename builds a saved frame's filename; used by both the save path
+// and the sky-metric record so the highlights manifest can reference frames.
+func frameFilename(prefix string, ts time.Time, imageType string) string {
+	return fmt.Sprintf("%s-%s.%s", prefix, ts.Format("20060102150405"), imageType)
+}
+
+// highlightCount is how many top frames the nightly manifest records.
+const highlightCount = 5
+
+// Highlight is one entry in the nightly best-frames manifest.
+type Highlight struct {
+	File  string  `json:"file"`
+	Time  string  `json:"time"`
+	Stars int     `json:"stars"`
+	Cloud float64 `json:"cloud"`
+}
+
+// writeHighlights ranks the night's frames by star count weighted by clear
+// sky and writes the top picks to highlights-<date>.json in nightDir. Runs
+// after end-of-night processing so WebP-converted filenames can be resolved
+// (entries whose original file is gone fall back to the .webp twin; frames
+// that vanished entirely are skipped).
+func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
+	type scored struct {
+		m     cloud.Metric
+		score float64
+	}
+	var candidates []scored
+	for _, m := range ms {
+		if m.File == "" || m.StarCount == 0 {
+			continue
+		}
+		candidates = append(candidates, scored{m, float64(m.StarCount) * (1 - m.Coverage)})
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	slices.SortFunc(candidates, func(a, b scored) int {
+		switch {
+		case a.score > b.score:
+			return -1
+		case a.score < b.score:
+			return 1
+		}
+		return 0
+	})
+
+	var picks []Highlight
+	for _, c := range candidates {
+		if len(picks) >= highlightCount {
+			break
+		}
+		file := c.m.File
+		if _, err := os.Stat(filepath.Join(nightDir, file)); err != nil {
+			webp := strings.TrimSuffix(file, filepath.Ext(file)) + ".webp"
+			if _, err := os.Stat(filepath.Join(nightDir, webp)); err != nil {
+				continue
+			}
+			file = webp
+		}
+		picks = append(picks, Highlight{
+			File:  file,
+			Time:  c.m.Timestamp.Format("15:04:05"),
+			Stars: c.m.StarCount,
+			Cloud: c.m.Coverage,
+		})
+	}
+	if len(picks) == 0 {
+		return
+	}
+
+	date := filepath.Base(nightDir)
+	data, err := json.MarshalIndent(map[string]any{"date": date, "frames": picks}, "", "  ")
+	if err != nil {
+		return
+	}
+	path := filepath.Join(nightDir, "highlights-"+date+".json")
+	if err := writeFileAtomic(path, data); err != nil {
+		logger.Error("highlights write failed", "error", err)
+		return
+	}
+	logger.Info("night highlights written", "path", path, "frames", len(picks))
 }
 
 // nightSummaryMessage composes the dawn notification from the night's sky
