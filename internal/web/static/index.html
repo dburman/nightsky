@@ -225,41 +225,82 @@ table.kv td.v {
 }
 .btn:hover { background: var(--card-hover); border-color: var(--accent); }
 
-/* Date pills */
-.date-pills-wrap {
-  overflow-x: auto;
-  margin-bottom: 16px;
-  padding-bottom: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-.date-pills {
-  display: flex;
-  gap: 8px;
-  min-width: max-content;
-}
-.pill {
+/* Calendar date picker */
+.cal {
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 5px 14px;
+  border-radius: var(--radius);
+  padding: 12px;
+  max-width: 340px;
+  margin-bottom: 16px;
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.cal-nav {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.cal-nav:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.cal-nav:disabled { opacity: 0.3; cursor: default; }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.cal-dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 0;
+}
+.cal-day {
+  text-align: center;
+  font-size: 12px;
+  padding: 5px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  opacity: 0.35;
+}
+.cal-day.has {
+  opacity: 1;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
   cursor: pointer;
   transition: border-color 0.15s, color 0.15s, background 0.15s;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
 }
-.pill:hover { background: var(--card-hover); color: var(--text); }
-.pill.active {
+.cal-day.has:hover { border-color: var(--accent); color: var(--accent); }
+.cal-day.active {
+  background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--accent-glow);
+  font-weight: 700;
 }
-.pill .pill-count {
-  font-size: 10px;
-  margin-left: 5px;
-  opacity: 0.7;
+.cal-day .cal-dot {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--success);
+  margin: 2px auto 0;
 }
 
 /* Sub-tabs */
@@ -885,6 +926,7 @@ async function loadCaptures(force) {
   if (force) {
     dateImages  = {};
     activeDate  = null;
+    calView     = null;
   }
 
   const el = document.getElementById('captures-content');
@@ -912,21 +954,80 @@ async function loadCaptures(force) {
   await loadDateContent(activeDate);
 }
 
-function renderCaptures() {
-  const pills = capturesList.map(c => {
-    const active = c.date === activeDate ? 'active' : '';
-    return `<button class="pill ${active}" onclick="selectDate('${esc(c.date)}')">${esc(c.date)}<span class="pill-count">${c.image_count}</span></button>`;
-  }).join('');
+/* Calendar month being displayed, as {y, m} with m 1-12. null = month of
+   the active date. Kept outside renderCaptures so month navigation persists
+   across re-renders. */
+let calView = null;
 
+// monthOf parses "YYYY-MM-DD" into {y, m} without Date-object timezone traps.
+function monthOf(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  return { y, m };
+}
+
+function monthKey(v) { return v.y * 12 + (v.m - 1); }
+
+function calShift(delta) {
+  calView = { ...(calView || monthOf(activeDate)) };
+  calView.m += delta;
+  while (calView.m > 12) { calView.m -= 12; calView.y++; }
+  while (calView.m < 1)  { calView.m += 12; calView.y--; }
+  renderCaptures();
+  renderDateContent(activeDate);
+}
+
+function renderCalendar() {
+  const byDate = {};
+  capturesList.forEach(c => { byDate[c.date] = c; });
+  // capturesList is newest-first: bounds of month navigation.
+  const newest = monthOf(capturesList[0].date);
+  const oldest = monthOf(capturesList[capturesList.length - 1].date);
+  const view = calView || monthOf(activeDate);
+
+  const monthName = new Date(view.y, view.m - 1, 1)
+    .toLocaleString('default', { month: 'long', year: 'numeric' });
+  const atOldest = monthKey(view) <= monthKey(oldest);
+  const atNewest = monthKey(view) >= monthKey(newest);
+
+  let cells = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+    .map(d => `<div class="cal-dow">${d}</div>`).join('');
+
+  const firstDow = new Date(view.y, view.m - 1, 1).getDay();
+  const daysInMonth = new Date(view.y, view.m, 0).getDate();
+  for (let i = 0; i < firstDow; i++) cells += '<div></div>';
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${view.y}-${String(view.m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const c = byDate[dateStr];
+    if (!c) {
+      cells += `<div class="cal-day">${day}</div>`;
+      continue;
+    }
+    const active = dateStr === activeDate ? ' active' : '';
+    const dot = c.has_video ? '<span class="cal-dot"></span>' : '';
+    cells += `<div class="cal-day has${active}" title="${esc(dateStr)} · ${c.image_count} images"
+      onclick="selectDate('${esc(dateStr)}')">${day}${dot}</div>`;
+  }
+
+  return `
+    <div class="cal">
+      <div class="cal-head">
+        <button class="cal-nav" onclick="calShift(-1)" ${atOldest ? 'disabled' : ''} title="Earlier month">‹</button>
+        <span class="cal-title">${esc(monthName)}</span>
+        <button class="cal-nav" onclick="calShift(1)" ${atNewest ? 'disabled' : ''} title="Later month">›</button>
+      </div>
+      <div class="cal-grid">${cells}</div>
+    </div>
+  `;
+}
+
+function renderCaptures() {
   const subVideo      = activeSub === 'video'      ? 'active' : '';
   const subKeogram    = activeSub === 'keogram'    ? 'active' : '';
   const subStartrails = activeSub === 'startrails' ? 'active' : '';
   const subImages     = activeSub === 'images'     ? 'active' : '';
 
   document.getElementById('captures-content').innerHTML = `
-    <div class="date-pills-wrap">
-      <div class="date-pills">${pills}</div>
-    </div>
+    ${renderCalendar()}
     <div class="sub-tabs">
       <button class="${subVideo}"      onclick="selectSub('video')">Video</button>
       <button class="${subKeogram}"    onclick="selectSub('keogram')">Keogram</button>
