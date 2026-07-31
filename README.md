@@ -587,14 +587,14 @@ HTTP API endpoints:
 
 ### `nightsky timelapse`
 
-Generates a timelapse video from a directory of captured images.
+Generates a timelapse video from a directory of captured images. Settings come from the `output.timelapse` section of the config; flags override individual settings only when explicitly passed.
 
 ```bash
-# Most recent date directory
+# Most recent date directory, using the config's timelapse settings
 nightsky timelapse
 
-# Specific directory with custom settings
-nightsky timelapse --dir ./output/2026-03-16 --fps 30 --bitrate 4000k --codec libx265
+# Specific directory, overriding just the codec and fps
+nightsky timelapse --dir ./output/2026-03-16 --fps 30 --codec libx265
 ```
 
 ### `nightsky dark`

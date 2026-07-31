@@ -319,13 +319,14 @@ func timelapseCmd() *cobra.Command {
 		Short: "Generate a timelapse video from captured images",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			applyMemoryLimit(cfg, logger)
 
 			if dir == "" {
 				// Default to most recent date directory.
-				cfg, err := loadConfig()
-				if err != nil {
-					return err
-				}
 				dirs, err := capture.ListDateDirs(cfg.Output.Directory)
 				if err != nil || len(dirs) == 0 {
 					return fmt.Errorf("no image directories found")
@@ -334,17 +335,43 @@ func timelapseCmd() *cobra.Command {
 				logger.Info("using most recent directory", "dir", dir)
 			}
 
-			tlCfg := timelapse.Config{
-				FPS:     fps,
-				Bitrate: bitrate,
-				Codec:   codec,
-				CRF:     crf,
-				Preset:  preset,
-				GOP:     gop,
-				Tune:    tune,
-				Threads: threads,
-				PixFmt:  pixFmt,
+			// Settings come from the yaml timelapse config; flags override
+			// only when explicitly passed on the command line.
+			tlCfg := timelapse.FromConfig(cfg.Output.Timelapse)
+			f := cmd.Flags()
+			if f.Changed("fps") {
+				tlCfg.FPS = fps
 			}
+			if f.Changed("bitrate") {
+				tlCfg.Bitrate = bitrate
+			}
+			if f.Changed("codec") {
+				tlCfg.Codec = codec
+			}
+			if f.Changed("crf") {
+				tlCfg.CRF = crf
+			}
+			if f.Changed("preset") {
+				tlCfg.Preset = preset
+			}
+			if f.Changed("gop") {
+				tlCfg.GOP = gop
+			}
+			if f.Changed("tune") {
+				tlCfg.Tune = tune
+			}
+			if f.Changed("threads") {
+				tlCfg.Threads = threads
+			}
+			if f.Changed("pix-fmt") {
+				tlCfg.PixFmt = pixFmt
+			}
+
+			logger.Info("timelapse settings",
+				"codec", tlCfg.Codec, "fps", tlCfg.FPS, "crf", tlCfg.CRF,
+				"preset", tlCfg.Preset, "threads", tlCfg.Threads,
+				"pix_fmt", tlCfg.PixFmt, "deflicker", tlCfg.Deflicker,
+			)
 
 			path, err := timelapse.Generate(context.Background(), dir, tlCfg, logger)
 			if err != nil {
