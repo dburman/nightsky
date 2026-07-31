@@ -97,6 +97,10 @@ type Loop struct {
 	auroraDet    *alerts.AuroraDetector // nil unless aurora alerting is enabled
 	lastStars    stars.Result           // most recent star detection, for metrics
 	auroraEvents int                    // alerts fired this night, for the summary
+
+	// now supplies the wall clock for every mode/session/staleness decision;
+	// defaults to time.Now and is replaced by tests to simulate a night.
+	now func() time.Time
 }
 
 // NewLoop creates a new capture loop.
@@ -107,6 +111,7 @@ func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 		logger:    logger,
 		thumbSem:  make(chan struct{}, 2),
 		segmentWg: &sync.WaitGroup{},
+		now:       time.Now,
 	}
 
 	// Initialize dark frame manager if enabled.
@@ -157,7 +162,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.logger.Info("initial mode", "mode", l.mode)
 	l.initMode()
 
-	l.lastCaptured = time.Now()
+	l.lastCaptured = l.now()
 
 	for {
 		// Pet the systemd watchdog (no-op outside systemd). Sent every
@@ -172,9 +177,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		// systemd restarts the whole process (fresh camera stack) rather
 		// than silently losing the night. Keyed on successful captures, not
 		// saves, so long-delay skip-frame stretches can't false-trip it.
-		if limit := staleLimit(l.modeConfig().Delay); time.Since(l.lastCaptured) > limit {
+		if limit := staleLimit(l.modeConfig().Delay); l.now().Sub(l.lastCaptured) > limit {
 			return fmt.Errorf("no successful capture in %s (limit %s) — exiting for a clean restart",
-				time.Since(l.lastCaptured).Round(time.Second), limit)
+				l.now().Sub(l.lastCaptured).Round(time.Second), limit)
 		}
 
 		select {
@@ -305,7 +310,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			continue
 		}
 		l.failureStreak = 0
-		l.lastCaptured = time.Now()
+		l.lastCaptured = l.now()
 
 		l.frameCount++
 
@@ -339,7 +344,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// controller stops fighting moonlight with maximum gain.
 		if modeCfg.AutoExposure && modeCfg.MoonTargetBoost > 0 {
 			target := modeCfg.TargetBrightness
-			now := time.Now()
+			now := l.now()
 			if astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude > 0 {
 				target *= 1 + modeCfg.MoonTargetBoost*astro.MoonPhase(now)
 			}
@@ -412,7 +417,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		// Save image. Night images all go into the folder named after the
 		// night's start date so midnight crossings don't split the dataset.
-		dateLabel := time.Now().Format("2006-01-02")
+		dateLabel := l.now().Format("2006-01-02")
 		if l.mode == ModeNight {
 			if l.nightSessionDir == "" {
 				l.nightSessionDir = dateLabel
@@ -506,7 +511,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			last := l.cloudMetrics[len(l.cloudMetrics)-1]
 			cloudCov, greenRatio = last.Coverage, last.GreenRatio
 		}
-		now := time.Now()
+		now := l.now()
 		snap := metrics.Snapshot{
 			Mode:           l.mode.String(),
 			ExposureNs:     l.exposureCtrl.Exposure.Nanoseconds(),
@@ -554,7 +559,7 @@ func (l *Loop) Run(ctx context.Context) error {
 
 // currentMode determines whether it's day or night based on sun position.
 func (l *Loop) currentMode() Mode {
-	if astro.IsNight(time.Now(), l.cfg.Location.Latitude, l.cfg.Location.Longitude, l.cfg.Location.Angle) {
+	if astro.IsNight(l.now(), l.cfg.Location.Latitude, l.cfg.Location.Longitude, l.cfg.Location.Angle) {
 		return ModeNight
 	}
 	return ModeDay
@@ -575,7 +580,7 @@ func (l *Loop) initMode() {
 			// Label the session by the date of the most recent dusk, not the
 			// wall clock: a restart after midnight would otherwise start a
 			// second directory for the same night, splitting the timelapse.
-			sessionTime := time.Now()
+			sessionTime := l.now()
 			if dusk, ok := astro.MostRecentDusk(sessionTime,
 				l.cfg.Location.Latitude, l.cfg.Location.Longitude, l.cfg.Location.Angle); ok {
 				sessionTime = dusk
