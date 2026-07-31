@@ -411,8 +411,11 @@ table.kv td.v {
   padding: 24px 0;
 }
 .video-wrap video {
-  width: 100%;
-  max-width: 800px;
+  /* Intrinsic size, shrunk to fit the container — never upscaled past the
+     content's native resolution, never a fixed cap below it. */
+  width: auto;
+  height: auto;
+  max-width: 100%;
   border-radius: var(--radius);
   background: #000;
   border: 1px solid var(--border);
@@ -431,15 +434,24 @@ table.kv td.v {
   gap: 8px;
 }
 .keogram-wrap img {
+  /* Keograms are data strips: stretching to the container is intentional
+     (hence pixelated rendering), just no arbitrary width cap. */
   width: 100%;
-  max-width: 1200px;
+  max-width: 100%;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   image-rendering: pixelated;
 }
+.keogram-wrap img.native-fit {
+  /* Photographic outputs (star trails): intrinsic size, shrink-to-fit,
+     never upscaled. */
+  width: auto;
+  height: auto;
+  image-rendering: auto;
+}
 .keogram-label {
   width: 100%;
-  max-width: 1200px;
+  max-width: 100%;
   display: flex;
   justify-content: space-between;
   font-size: 11px;
@@ -1247,7 +1259,7 @@ function renderStarTrails(container, url, date) {
   }
   container.innerHTML = `
     <div class="keogram-wrap">
-      <img src="${esc(url)}" alt="Star trails for ${esc(date)}">
+      <img class="native-fit" src="${esc(url)}" alt="Star trails for ${esc(date)}">
     </div>
   `;
 }
