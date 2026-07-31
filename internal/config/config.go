@@ -282,6 +282,11 @@ type TimelapseConfig struct {
 	// (frequency capping, SDIO WiFi instability on Pi Zero 2). Recommended
 	// 70 on Pi-class hardware. 0 = disabled.
 	ThermalLimitC int `mapstructure:"thermal_limit_c" json:"thermal_limit_c"`
+	// PixFmt selects the output pixel format. "" = yuv420p (8-bit, plays
+	// everywhere). "yuv420p10le" enables 10-bit for AV1/x265: much less
+	// banding in dark sky gradients at similar file size, but older
+	// hardware decoders can't play it.
+	PixFmt string `mapstructure:"pix_fmt" json:"pix_fmt"`
 	// SegmentFrames, when > 0, enables iterative mode: a video segment is
 	// encoded after every N captured frames. At end of night the segments are
 	// concatenated with stream copy (no re-encode). 0 = encode at end of night.
@@ -468,6 +473,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.timelapse.tune", "")
 	v.SetDefault("output.timelapse.threads", 0)
 	v.SetDefault("output.timelapse.thermal_limit_c", 0)
+	v.SetDefault("output.timelapse.pix_fmt", "")
 
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)

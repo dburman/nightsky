@@ -45,6 +45,11 @@ type Config struct {
 	// ThermalLimitC defers encode start while the SoC is hotter than this
 	// (°C), rechecking until it cools or a max wait elapses. 0 = disabled.
 	ThermalLimitC int
+	// PixFmt selects the output pixel format. Empty = yuv420p (8-bit,
+	// universally compatible). yuv420p10le enables 10-bit for AV1/x265 —
+	// markedly less banding in dark sky gradients at similar size, but no
+	// playback on older hardware decoders.
+	PixFmt string
 }
 
 // FromConfig maps the persisted timelapse settings to an encode Config.
@@ -60,6 +65,7 @@ func FromConfig(c config.TimelapseConfig) Config {
 		Tune:          c.Tune,
 		Threads:       c.Threads,
 		ThermalLimitC: c.ThermalLimitC,
+		PixFmt:        c.PixFmt,
 	}
 }
 
@@ -302,19 +308,9 @@ func ffmpegCommand(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 // encodeImages runs ffmpeg to encode images into a video file at outputPath.
-func encodeImages(ctx context.Context, dir string, images []string, outputPath string, cfg Config) error {
-	listFile, err := os.CreateTemp(dir, "timelapse-*.txt")
-	if err != nil {
-		return fmt.Errorf("create temp list: %w", err)
-	}
-	listPath := listFile.Name()
-	listFile.Close()
-	defer os.Remove(listPath)
-
-	if err := writeFileList(listPath, images); err != nil {
-		return fmt.Errorf("write file list: %w", err)
-	}
-
+// buildEncodeArgs constructs the full ffmpeg argument list for one encode.
+// Pure function so tests exercise the real arguments rather than a mirror.
+func buildEncodeArgs(listPath, outputPath string, images []string, cfg Config) []string {
 	// -r (not -framerate) is required here: -framerate is an image2-demuxer
 	// option and the concat demuxer rejects it ("Option framerate not found").
 	// As an input option before -i, -r forces the input frame rate.
@@ -367,15 +363,50 @@ func encodeImages(ctx context.Context, dir string, images []string, outputPath s
 		}
 	}
 
+	// One filter chain (ffmpeg allows a single -vf): optional deflicker, an
+	// explicit BT.709 limited-range conversion, then setparams to tag the
+	// stream. Without the explicit matrix, swscale converts RGB frames with
+	// BT.601 coefficients and leaves the stream untagged — players then
+	// assume BT.709 for HD and shift saturated hues (aurora greens, star
+	// colours). Converting AND tagging as BT.709 makes the encode math and
+	// the metadata agree. setparams is used because the -color_primaries/
+	// -color_trc output options don't reach the codec VUI on current ffmpeg.
+	filters := make([]string, 0, 3)
 	if cfg.Deflicker {
-		args = append(args, "-vf", "deflicker=size=5:mode=am")
+		filters = append(filters, "deflicker=size=5:mode=am")
 	}
+	filters = append(filters,
+		"scale=out_color_matrix=bt709:out_range=tv",
+		"setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
+	)
+	args = append(args, "-vf", strings.Join(filters, ","))
 
+	pixFmt := cfg.PixFmt
+	if pixFmt == "" {
+		pixFmt = "yuv420p"
+	}
 	args = append(args,
-		"-pix_fmt", "yuv420p",
+		"-pix_fmt", pixFmt,
 		"-movflags", "+faststart",
 		outputPath,
 	)
+	return args
+}
+
+func encodeImages(ctx context.Context, dir string, images []string, outputPath string, cfg Config) error {
+	listFile, err := os.CreateTemp(dir, "timelapse-*.txt")
+	if err != nil {
+		return fmt.Errorf("create temp list: %w", err)
+	}
+	listPath := listFile.Name()
+	listFile.Close()
+	defer os.Remove(listPath)
+
+	if err := writeFileList(listPath, images); err != nil {
+		return fmt.Errorf("write file list: %w", err)
+	}
+
+	args := buildEncodeArgs(listPath, outputPath, images, cfg)
 
 	cmd := ffmpegCommand(ctx, args...)
 	var stderr bytes.Buffer

@@ -194,6 +194,11 @@ output:
     # thermal_limit_c when 0. Only set this to give the encoder a different
     # limit from the other processing steps.
     thermal_limit_c: 0
+    # Output pixel format. "" = yuv420p (8-bit, plays everywhere).
+    # "yuv420p10le" enables 10-bit for AV1/x265 — much less banding in dark
+    # sky gradients at similar size; older hardware decoders can't play it.
+    # All encodes convert and tag BT.709 limited range explicitly.
+    pix_fmt: ""
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses. Only effective
     # with segment_frames: 0 (it can't smooth across stream-copied segments).

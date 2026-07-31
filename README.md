@@ -364,6 +364,7 @@ output:
     gop: 0                  # max keyframe interval in frames; 0 = encoder default
     tune: ""                # encoder -tune value (codec-specific); "" = none
     threads: 0              # cap encoder threads (2 recommended on Pi Zero 2); 0 = default
+    pix_fmt: ""             # "" = yuv420p (8-bit); yuv420p10le = 10-bit for AV1/x265
     # Iterative mode: encode a video segment every N captured frames during
     # the night, then concatenate segments at dawn without re-encoding.
     # Spreads encoding cost across the night instead of one big job at dawn.
@@ -434,6 +435,8 @@ On low-memory boards (Pi Zero 2, 512 MB) also set `threads: 2` — it caps the e
 For enclosures that run hot (summer sun on an all-sky dome), set a top-level `thermal_limit_c: 70` — every heavy processing step (timelapse encode, keogram, star trails, WebP conversion) then waits for the SoC to cool below the limit before starting, rechecking every 2 minutes for up to 30 minutes per step, instead of piling processing heat onto an already-hot chip. Sustained heat triggers CPU frequency capping and destabilizes the Pi Zero 2's SDIO WiFi. A `timelapse.thermal_limit_c` can override the limit for the encoder specifically; it inherits the global value when unset.
 
 Note: `deflicker` only smooths brightness *within* a single encode. With `segment_frames > 0` the night is encoded in independent segments and stream-copy concatenated, so brightness steps at segment boundaries are not smoothed — use `segment_frames: 0` when you want full-night deflicker.
+
+**Color and bit depth.** Every encode explicitly converts to and tags **BT.709 limited range** (via `scale` + `setparams`), so the encode math and the container metadata agree — untagged output would be converted with BT.601 coefficients but decoded as BT.709 by most players, subtly shifting saturated hues like aurora green. For AV1/x265 archival encodes, `pix_fmt: yuv420p10le` enables **10-bit** output: dark-sky gradient banding largely disappears at similar file size, at the cost of playback on older hardware decoders.
 
 ### Upload
 

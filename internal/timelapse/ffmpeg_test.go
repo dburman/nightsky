@@ -48,37 +48,6 @@ func TestCollectSegments_ExcludesTmpFiles(t *testing.T) {
 	}
 }
 
-// encodeArgs is the arg-building logic of encodeImages, extracted for testing
-// without invoking ffmpeg. Keep in sync with encodeImages.
-func buildEncodeArgsForTest(listPath string, cfg Config, allWebPInput bool) []string {
-	args := []string{"-y", "-r", "25", "-f", "concat", "-safe", "0"}
-	if allWebPInput {
-		args = append(args, "-c:v", "webp")
-	}
-	args = append(args, "-i", listPath, "-vcodec", cfg.Codec)
-	if cfg.CRF > 0 {
-		args = append(args, "-crf", "x")
-	} else {
-		args = append(args, "-b:v", cfg.Bitrate)
-	}
-	if cfg.Preset != "" {
-		args = append(args, "-preset", cfg.Preset)
-	}
-	if cfg.Tune != "" {
-		args = append(args, "-tune", cfg.Tune)
-	}
-	if cfg.GOP > 0 {
-		args = append(args, "-g", "x")
-	}
-	if cfg.Threads > 0 {
-		args = append(args, "-threads", "x")
-		if cfg.Codec == "libsvtav1" {
-			args = append(args, "-svtav1-params", "x")
-		}
-	}
-	return args
-}
-
 func hasFlag(args []string, flag string) bool {
 	for _, a := range args {
 		if a == flag {
@@ -88,9 +57,20 @@ func hasFlag(args []string, flag string) bool {
 	return false
 }
 
-func TestEncodeArgs_OptionalFlags(t *testing.T) {
+func flagValue(args []string, flag string) string {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
+func TestBuildEncodeArgs_OptionalFlags(t *testing.T) {
+	pngs := []string{"a.png", "b.png"}
+
 	// Unset preset/tune/gop/threads must not appear.
-	bare := buildEncodeArgsForTest("list.txt", Config{Codec: "libx264", Bitrate: "2000k"}, false)
+	bare := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k"})
 	for _, flag := range []string{"-preset", "-tune", "-g", "-threads", "-svtav1-params"} {
 		if hasFlag(bare, flag) {
 			t.Errorf("%s present when unset", flag)
@@ -98,9 +78,9 @@ func TestEncodeArgs_OptionalFlags(t *testing.T) {
 	}
 
 	// Set values must appear; SVT-AV1 additionally gets lp= via -svtav1-params.
-	full := buildEncodeArgsForTest("list.txt", Config{
-		Codec: "libsvtav1", CRF: 32, Preset: "6", GOP: 250, Tune: "psnr", Threads: 2,
-	}, false)
+	full := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{
+		FPS: 25, Codec: "libsvtav1", CRF: 32, Preset: "6", GOP: 250, Tune: "psnr", Threads: 2,
+	})
 	for _, flag := range []string{"-preset", "-tune", "-g", "-crf", "-threads", "-svtav1-params"} {
 		if !hasFlag(full, flag) {
 			t.Errorf("%s missing when set", flag)
@@ -108,9 +88,56 @@ func TestEncodeArgs_OptionalFlags(t *testing.T) {
 	}
 
 	// Non-AV1 codecs get -threads but not -svtav1-params.
-	x264 := buildEncodeArgsForTest("list.txt", Config{Codec: "libx264", Bitrate: "2000k", Threads: 2}, false)
+	x264 := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k", Threads: 2})
 	if !hasFlag(x264, "-threads") || hasFlag(x264, "-svtav1-params") {
 		t.Error("x264 threads handling wrong")
+	}
+
+	// All-WebP input forces the WebP decoder before -i.
+	webp := buildEncodeArgs("list.txt", "out.mp4", []string{"a.webp"}, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k"})
+	if !hasFlag(webp, "-c:v") {
+		t.Error("all-WebP input did not force the webp decoder")
+	}
+}
+
+// The encode must convert AND tag BT.709 limited range in one -vf chain —
+// mismatched conversion coefficients vs container tags shift saturated hues.
+func TestBuildEncodeArgs_ColorHandling(t *testing.T) {
+	pngs := []string{"a.png"}
+
+	const colorChain = "scale=out_color_matrix=bt709:out_range=tv," +
+		"setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"
+
+	plain := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k"})
+	if got := flagValue(plain, "-vf"); got != colorChain {
+		t.Errorf("-vf = %q, want bt709 convert+tag chain", got)
+	}
+
+	// Deflicker joins the same single -vf chain (ffmpeg honours only one -vf).
+	withDeflicker := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k", Deflicker: true})
+	vfCount := 0
+	for _, a := range withDeflicker {
+		if a == "-vf" {
+			vfCount++
+		}
+	}
+	if vfCount != 1 {
+		t.Fatalf("-vf appears %d times, want exactly 1", vfCount)
+	}
+	if got := flagValue(withDeflicker, "-vf"); got != "deflicker=size=5:mode=am,"+colorChain {
+		t.Errorf("combined -vf = %q", got)
+	}
+}
+
+func TestBuildEncodeArgs_PixFmt(t *testing.T) {
+	pngs := []string{"a.png"}
+	def := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k"})
+	if got := flagValue(def, "-pix_fmt"); got != "yuv420p" {
+		t.Errorf("default pix_fmt = %q, want yuv420p", got)
+	}
+	tenBit := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libsvtav1", CRF: 32, PixFmt: "yuv420p10le"})
+	if got := flagValue(tenBit, "-pix_fmt"); got != "yuv420p10le" {
+		t.Errorf("pix_fmt override = %q, want yuv420p10le", got)
 	}
 }
 
