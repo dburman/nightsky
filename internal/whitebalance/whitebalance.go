@@ -65,7 +65,7 @@ func Analyze(dir string, settings ModeSettings) (*Result, error) {
 		}
 		lower := strings.ToLower(e.Name())
 		// Skip synthetic outputs.
-		if strings.HasPrefix(lower, "keogram-") || strings.HasPrefix(lower, "startrails-") {
+		if strings.HasPrefix(lower, "keogram-") || strings.HasPrefix(lower, "startrails-") || strings.HasPrefix(lower, "highlight") {
 			continue
 		}
 		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||

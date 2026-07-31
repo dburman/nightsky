@@ -94,6 +94,7 @@ func TestPruneRawImages_Boundary(t *testing.T) {
 	old := mkDateDir(t, root, dateLabel(2),
 		"allsky-1.jpg", "allsky-2.png", "allsky-3.dng",
 		"timelapse-x.mp4", "keogram-x.jpg", "startrails-x.jpg",
+		"highlight-1-allsky-1.jpg", "highlights-2026-06-08.json",
 	)
 	if err := os.MkdirAll(filepath.Join(old, ".thumbs"), 0755); err != nil {
 		t.Fatal(err)
@@ -112,7 +113,8 @@ func TestPruneRawImages_Boundary(t *testing.T) {
 			t.Errorf("%s should have been pruned", gone)
 		}
 	}
-	for _, kept := range []string{"allsky-3.dng", "timelapse-x.mp4", "keogram-x.jpg", "startrails-x.jpg"} {
+	for _, kept := range []string{"allsky-3.dng", "timelapse-x.mp4", "keogram-x.jpg", "startrails-x.jpg",
+		"highlight-1-allsky-1.jpg", "highlights-2026-06-08.json"} {
 		if _, err := os.Stat(filepath.Join(old, kept)); err != nil {
 			t.Errorf("%s should have been kept: %v", kept, err)
 		}

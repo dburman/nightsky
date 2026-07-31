@@ -55,7 +55,8 @@ func Generate(ctx context.Context, dateDir string, maxMeanBrightness float64, lo
 			strings.HasPrefix(lower, "keogram-") ||
 			strings.HasPrefix(lower, "startrails-") ||
 			strings.HasPrefix(lower, "wb-analysis-") ||
-			strings.HasPrefix(lower, "cloud-") {
+			strings.HasPrefix(lower, "cloud-") ||
+			strings.HasPrefix(lower, "highlight") {
 			continue
 		}
 		if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") ||

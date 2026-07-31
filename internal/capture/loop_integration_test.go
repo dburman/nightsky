@@ -260,6 +260,15 @@ waitLoop:
 	if _, err := os.Stat(filepath.Join(outDir, "2026-06-10", "highlights-2026-06-10.json")); err != nil {
 		t.Errorf("highlights manifest missing: %v", err)
 	}
+	// Highlights are protected copies that survive raw pruning.
+	copies, _ := filepath.Glob(filepath.Join(outDir, "2026-06-10", "highlight-*-test-*.png"))
+	if len(copies) == 0 {
+		t.Error("no protected highlight copies written")
+	}
+	manifest, _ := os.ReadFile(filepath.Join(outDir, "2026-06-10", "highlights-2026-06-10.json"))
+	if !strings.Contains(string(manifest), `"file": "highlight-1-`) {
+		t.Errorf("manifest does not reference protected copies: %s", manifest)
+	}
 	if _, err := os.Stat(filepath.Join(outDir, ".metrics.json")); err != nil {
 		t.Errorf("live metrics missing: %v", err)
 	}

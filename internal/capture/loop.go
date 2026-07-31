@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -686,10 +687,11 @@ type Highlight struct {
 }
 
 // writeHighlights ranks the night's frames by star count weighted by clear
-// sky and writes the top picks to highlights-<date>.json in nightDir. Runs
-// after end-of-night processing so WebP-converted filenames can be resolved
-// (entries whose original file is gone fall back to the .webp twin; frames
-// that vanished entirely are skipped).
+// sky, copies the top picks to protected highlight-N-<file> names that
+// survive raw pruning, and writes the manifest to highlights-<date>.json in
+// nightDir. Runs after end-of-night processing so WebP-converted filenames
+// can be resolved (entries whose original file is gone fall back to the
+// .webp twin; frames that vanished entirely are skipped).
 func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 	type scored struct {
 		m     cloud.Metric
@@ -715,6 +717,9 @@ func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 		return 0
 	})
 
+	// Stale protected copies from a previous run of this night are replaced.
+	removeOldHighlightCopies(nightDir)
+
 	var picks []Highlight
 	for _, c := range candidates {
 		if len(picks) >= highlightCount {
@@ -728,6 +733,19 @@ func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 			}
 			file = webp
 		}
+
+		// Copy to a protected name the raw pruner keeps, so the night's best
+		// frames outlive prune_raw_after_days. On copy failure the manifest
+		// references the original (works until pruned).
+		protected := fmt.Sprintf("highlight-%d-%s", len(picks)+1, file)
+		if data, err := os.ReadFile(filepath.Join(nightDir, file)); err == nil {
+			if err := writeFileAtomic(filepath.Join(nightDir, protected), data); err == nil {
+				file = protected
+			} else {
+				logger.Warn("highlight copy failed", "file", protected, "error", err)
+			}
+		}
+
 		picks = append(picks, Highlight{
 			File:  file,
 			Time:  c.m.Timestamp.Format("15:04:05"),
@@ -750,6 +768,24 @@ func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 		return
 	}
 	logger.Info("night highlights written", "path", path, "frames", len(picks))
+}
+
+// highlightCopyRe matches protected highlight frame copies (not the
+// highlights-<date>.json manifest).
+var highlightCopyRe = regexp.MustCompile(`^highlight-\d+-`)
+
+// removeOldHighlightCopies deletes protected copies from a previous
+// highlights run so re-processing a night can't accumulate stale picks.
+func removeOldHighlightCopies(nightDir string) {
+	entries, err := os.ReadDir(nightDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && highlightCopyRe.MatchString(strings.ToLower(e.Name())) {
+			os.Remove(filepath.Join(nightDir, e.Name()))
+		}
+	}
 }
 
 // nightSummaryMessage composes the dawn notification from the night's sky
@@ -932,6 +968,7 @@ func pruneRawInDir(dir string) (int, error) {
 			strings.HasPrefix(lower, "startrails-") ||
 			strings.HasPrefix(lower, "wb-analysis-") ||
 			strings.HasPrefix(lower, "cloud-") ||
+			strings.HasPrefix(lower, "highlight") || // highlight-N-* copies + highlights-*.json
 			strings.HasSuffix(lower, ".dng") {
 			continue
 		}

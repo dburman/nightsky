@@ -286,6 +286,12 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Protected highlight copies appear on the Highlights tab, not in
+		// the main grid (they duplicate frames that may since be pruned).
+		if strings.HasPrefix(lower, "highlight") {
+			continue
+		}
+
 		if strings.HasPrefix(lower, "keogram-") && strings.HasSuffix(lower, ".jpg") {
 			keogramURL = "/output/" + date + "/" + name
 			continue
@@ -559,7 +565,8 @@ func latestImagePath(outputDir string) (string, error) {
 				strings.HasPrefix(lower, "keogram-") ||
 				strings.HasPrefix(lower, "startrails-") ||
 				strings.HasPrefix(lower, "wb-analysis-") ||
-				strings.HasPrefix(lower, "cloud-") {
+				strings.HasPrefix(lower, "cloud-") ||
+				strings.HasPrefix(lower, "highlight") {
 				continue
 			}
 			if isImageFile(lower) {

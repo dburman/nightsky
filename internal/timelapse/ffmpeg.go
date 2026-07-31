@@ -453,7 +453,8 @@ func collectImages(dir string) ([]string, error) {
 			strings.HasPrefix(name, "keogram-") ||
 			strings.HasPrefix(name, "startrails-") ||
 			strings.HasPrefix(name, "wb-analysis-") ||
-			strings.HasPrefix(name, "cloud-") {
+			strings.HasPrefix(name, "cloud-") ||
+			strings.HasPrefix(name, "highlight") {
 			continue
 		}
 		if strings.HasSuffix(name, ".jpg") ||

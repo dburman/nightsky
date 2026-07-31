@@ -29,7 +29,7 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Aurora alerting** — Watches the sky's green ratio against a rolling baseline and pushes a webhook notification (ntfy-compatible) when a sustained green excess appears under clear skies. One alert per surge, re-armed after quiet.
 - **Moon awareness** — Built-in lunar position/phase math: optionally raises the auto-exposure target while the moon is up (`moon_target_boost`), skips star trails on bright moonlit nights (`skip_moonlit`), and reports moon state in the live metrics.
 - **Star metrics + focus aid** — Counts point sources and measures their sharpness (FWHM) on night frames; logged to the nightly CSV, shown live in the web UI, and served on demand at `/api/focus` for focusing the lens (maximize stars, minimize FWHM).
-- **Night summary & highlights** — Optional dawn notification with the night's statistics, plus an automatic top-5 highlight frame selection (stars × clear sky) rendered as a strip in the web gallery.
+- **Night summary & highlights** — Optional dawn notification with the night's statistics, plus an automatic top-5 highlight selection (stars × clear sky): the best frames are copied to protected `highlight-N-*` names that survive raw pruning and shown on a dedicated Highlights tab in the web gallery.
 - **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in external dashboards.
 - **Live metrics endpoint** — `GET /api/metrics` returns the current capture state as JSON (mode, exposure, gain, mean brightness, cloud coverage, sensor temperature, frame count). Written to `.metrics.json` after every frame so it works across process boundaries in Docker Compose and systemd split-service deployments.
 - **Web UI** — Built-in HTTP server (`nightsky serve`) with Configuration, Captures, and Live tabs. Captures tab: browse by date with Video, Keogram, Star Trails, and Images sub-tabs, paginated lazy-loaded thumbnails. Live tab: auto-refreshing current frame with real-time metrics sidebar (exposure, gain, brightness, cloud coverage bar, sensor temperature). No external dependencies, embedded in the binary.
@@ -570,7 +570,7 @@ nightsky serve --config /etc/nightsky/nightsky.yaml --addr 0.0.0.0:8080
 The UI is served at `http://localhost:8080` by default. It is embedded in the binary with no external dependencies. Three tabs are available:
 
 - **Configuration** — current config values rendered as a read-only dashboard
-- **Captures** — browse nights by date; sub-tabs for Video, Keogram, Star Trails, and Images with paginated lazy-loaded thumbnails
+- **Captures** — browse nights via a calendar date picker; sub-tabs for Video, Keogram, Star Trails, Highlights, and Images with paginated lazy-loaded thumbnails
 - **Live** — auto-refreshing current frame (polls `/latest` every 5 s) alongside a real-time metrics sidebar showing mode, exposure, gain, brightness, cloud coverage, and sensor temperature; shows "capture not running" when the capture loop is stopped
 
 HTTP API endpoints:

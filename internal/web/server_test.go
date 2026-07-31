@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dburman/nightsky/internal/config"
@@ -130,12 +131,19 @@ func TestDateImages_IncludesHighlights(t *testing.T) {
 	ts := httptest.NewServer(srv.routes())
 	defer ts.Close()
 
+	// A protected highlight copy must appear via the manifest, not as a
+	// duplicate in the main image grid.
+	writeTestPNG(t, filepath.Join(dir, "2026-06-10", "highlight-1-allsky-1.png"))
+
 	resp, err := http.Get(ts.URL + "/api/captures/2026-06-10/images")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	var body struct {
+		Images []struct {
+			Name string `json:"name"`
+		} `json:"images"`
 		Highlights []struct {
 			Name  string `json:"name"`
 			URL   string `json:"url"`
@@ -151,6 +159,11 @@ func TestDateImages_IncludesHighlights(t *testing.T) {
 	h := body.Highlights[0]
 	if h.Name != "allsky-1.png" || h.Stars != 210 || h.URL != "/output/2026-06-10/allsky-1.png" {
 		t.Errorf("unexpected highlight: %+v", h)
+	}
+	for _, img := range body.Images {
+		if strings.HasPrefix(img.Name, "highlight") {
+			t.Errorf("highlight copy leaked into the image grid: %s", img.Name)
+		}
 	}
 }
 

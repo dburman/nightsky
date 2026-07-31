@@ -34,7 +34,7 @@ func ConvertPNGsToWebP(ctx context.Context, dir string, quality int, deleteOrigi
 			continue
 		}
 		// Skip synthetic outputs — they are already JPEG.
-		if strings.HasPrefix(lower, "keogram-") || strings.HasPrefix(lower, "startrails-") {
+		if strings.HasPrefix(lower, "keogram-") || strings.HasPrefix(lower, "startrails-") || strings.HasPrefix(lower, "highlight") {
 			continue
 		}
 
