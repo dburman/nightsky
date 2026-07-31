@@ -381,6 +381,13 @@ func buildEncodeArgs(listPath, outputPath string, images []string, cfg Config) [
 	)
 	args = append(args, "-vf", strings.Join(filters, ","))
 
+	// Apple players (Safari, iOS, QuickTime) require the hvc1 sample-entry
+	// tag for HEVC in MP4; ffmpeg's default hev1 makes the file silently
+	// unplayable on them. Every other player accepts hvc1.
+	if strings.Contains(cfg.Codec, "265") || strings.Contains(cfg.Codec, "hevc") {
+		args = append(args, "-tag:v", "hvc1")
+	}
+
 	pixFmt := cfg.PixFmt
 	if pixFmt == "" {
 		pixFmt = "yuv420p"

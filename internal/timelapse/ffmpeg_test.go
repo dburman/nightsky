@@ -129,6 +129,21 @@ func TestBuildEncodeArgs_ColorHandling(t *testing.T) {
 	}
 }
 
+// HEVC must be tagged hvc1 or Apple players silently refuse the file.
+func TestBuildEncodeArgs_HEVCTag(t *testing.T) {
+	pngs := []string{"a.png"}
+	hevc := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx265", CRF: 26})
+	if got := flagValue(hevc, "-tag:v"); got != "hvc1" {
+		t.Errorf("x265 -tag:v = %q, want hvc1", got)
+	}
+	for _, codec := range []string{"libx264", "libsvtav1"} {
+		other := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: codec, CRF: 26})
+		if hasFlag(other, "-tag:v") {
+			t.Errorf("%s should not set -tag:v", codec)
+		}
+	}
+}
+
 func TestBuildEncodeArgs_PixFmt(t *testing.T) {
 	pngs := []string{"a.png"}
 	def := buildEncodeArgs("list.txt", "out.mp4", pngs, Config{FPS: 25, Codec: "libx264", Bitrate: "2000k"})
