@@ -262,6 +262,9 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 		"-safe", "0",
 		"-i", listPath,
 		"-c", "copy",
+		// Progressive-playback clients (iOS Safari especially) want the moov
+		// index at the front; without it, segmented nights ship index-last.
+		"-movflags", "+faststart",
 		tmpOutput,
 	}
 
