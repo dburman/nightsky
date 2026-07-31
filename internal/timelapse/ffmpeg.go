@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dburman/nightsky/internal/config"
+	"github.com/dburman/nightsky/internal/thermal"
 )
 
 // Config holds parameters for timelapse video generation.
@@ -100,7 +101,7 @@ func Generate(ctx context.Context, imageDir string, cfg Config, logger *slog.Log
 		"codec", cfg.Codec,
 	)
 
-	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
+	thermal.Wait(ctx, cfg.ThermalLimitC, logger)
 
 	date := filepath.Base(imageDir)
 	outputPath := filepath.Join(imageDir, "timelapse-"+date+".mp4")
@@ -153,7 +154,7 @@ func GenerateSegment(ctx context.Context, dir string, segIdx int, segmentFrames 
 
 	logger.Info("generating timelapse segment", "dir", dir, "segment", segIdx, "frames", len(images))
 
-	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
+	thermal.Wait(ctx, cfg.ThermalLimitC, logger)
 
 	if err := encodeImages(ctx, dir, images, tmpOutput, cfg); err != nil {
 		return "", err
@@ -189,7 +190,7 @@ func FinalizeSegments(ctx context.Context, dir string, date string, segmentFrame
 
 	removeStaleTmp(dir, logger)
 
-	waitForCoolSoC(ctx, cfg.ThermalLimitC, logger)
+	thermal.Wait(ctx, cfg.ThermalLimitC, logger)
 
 	segments, err := collectSegments(dir)
 	if err != nil {

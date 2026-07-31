@@ -263,6 +263,8 @@ Environment variables override config file values with the prefix `NIGHTSKY_` (e
 
 On low-memory boards, set a top-level `memory_limit_mb` (e.g. `250` on a 512 MB Pi Zero 2) — it installs a soft Go heap limit so the garbage collector frees memory aggressively before the kernel OOM killer gets involved, leaving headroom for ffmpeg during end-of-night encoding. The `GOMEMLIMIT` environment variable takes precedence when set.
 
+On thermally-constrained boards, also set a top-level `thermal_limit_c` (e.g. `70`) — every heavy processing step (timelapse, keogram, star trails, WebP conversion) defers until the SoC cools below the limit, so end-of-night work never stacks heat onto an already-hot chip. See the codec notes under Output for details.
+
 See [`configs/nightsky.example.yaml`](configs/nightsky.example.yaml) for a fully commented example.
 
 ### Camera
@@ -429,7 +431,7 @@ A long keyframe interval helps a static-camera timelapse: try `gop: 250` (≈10 
 
 On low-memory boards (Pi Zero 2, 512 MB) also set `threads: 2` — it caps the encoder's thread pool (`-threads`, plus `lp=2` for SVT-AV1), roughly halving peak encode memory and softening the all-core CPU/power spike that can brown out a marginal supply. Combine with `segment_frames` so the night is encoded in small chunks rather than one large dawn job.
 
-For enclosures that run hot (summer sun on an all-sky dome), set `thermal_limit_c: 70` — each encode then waits for the SoC to cool below the limit before starting (rechecking every 2 minutes, up to 30 minutes) instead of piling encode heat onto an already-hot chip. Sustained heat triggers CPU frequency capping and destabilizes the Pi Zero 2's SDIO WiFi.
+For enclosures that run hot (summer sun on an all-sky dome), set a top-level `thermal_limit_c: 70` — every heavy processing step (timelapse encode, keogram, star trails, WebP conversion) then waits for the SoC to cool below the limit before starting, rechecking every 2 minutes for up to 30 minutes per step, instead of piling processing heat onto an already-hot chip. Sustained heat triggers CPU frequency capping and destabilizes the Pi Zero 2's SDIO WiFi. A `timelapse.thermal_limit_c` can override the limit for the encoder specifically; it inherits the global value when unset.
 
 Note: `deflicker` only smooths brightness *within* a single encode. With `segment_frames > 0` the night is encoded in independent segments and stream-copy concatenated, so brightness steps at segment boundaries are not smoothed — use `segment_frames: 0` when you want full-night deflicker.
 

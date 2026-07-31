@@ -32,6 +32,13 @@ location:
 # 0 = no limit. The GOMEMLIMIT environment variable takes precedence.
 memory_limit_mb: 0
 
+# Defer every heavy processing step (timelapse encode, keogram, star trails,
+# WebP conversion) while the SoC is hotter than this (°C), rechecking every
+# 2 minutes for up to 30 minutes per step. Keeps processing heat off an
+# already-hot chip (frequency capping, SDIO WiFi instability on Pi Zero 2).
+# Recommended 70 on Pi-class hardware. 0 = disabled.
+thermal_limit_c: 0
+
 # Day mode settings (sun above angle threshold)
 day:
   exposure: 1ms
@@ -183,10 +190,9 @@ output:
     # lower peak memory and a smaller CPU/power spike. Recommended: 2 on
     # low-memory boards (Pi Zero 2). 0 = encoder default.
     threads: 0
-    # Defer encode start while the SoC is hotter than this (°C), rechecking
-    # every 2 minutes for up to 30 minutes. Keeps encode heat off an
-    # already-hot chip (thermal capping, SDIO WiFi instability). Recommended
-    # 70 on Pi-class hardware. 0 = disabled.
+    # Timelapse-specific thermal limit (°C); inherits the top-level
+    # thermal_limit_c when 0. Only set this to give the encoder a different
+    # limit from the other processing steps.
     thermal_limit_c: 0
     # Deflicker: smooth per-frame brightness variation caused by clouds and
     # auto-exposure steps. Recommended for night timelapses. Only effective

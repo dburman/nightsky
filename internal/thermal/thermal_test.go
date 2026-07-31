@@ -1,12 +1,17 @@
-package timelapse
+package thermal
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+}
 
 func setTempFixture(t *testing.T, milliDegrees string) {
 	t.Helper()
@@ -14,14 +19,14 @@ func setTempFixture(t *testing.T, milliDegrees string) {
 	if err := os.WriteFile(path, []byte(milliDegrees+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	old := socTempPath
-	socTempPath = path
-	t.Cleanup(func() { socTempPath = old })
+	old := TempPath
+	TempPath = path
+	t.Cleanup(func() { TempPath = old })
 }
 
-func TestReadSoCTemp(t *testing.T) {
+func TestReadTemp(t *testing.T) {
 	setTempFixture(t, "48234")
-	temp, ok := readSoCTemp()
+	temp, ok := ReadTemp()
 	if !ok {
 		t.Fatal("expected read to succeed")
 	}
@@ -30,45 +35,43 @@ func TestReadSoCTemp(t *testing.T) {
 	}
 }
 
-func TestReadSoCTemp_MissingFile(t *testing.T) {
-	old := socTempPath
-	socTempPath = filepath.Join(t.TempDir(), "nope")
-	t.Cleanup(func() { socTempPath = old })
-	if _, ok := readSoCTemp(); ok {
+func TestReadTemp_MissingFile(t *testing.T) {
+	old := TempPath
+	TempPath = filepath.Join(t.TempDir(), "nope")
+	t.Cleanup(func() { TempPath = old })
+	if _, ok := ReadTemp(); ok {
 		t.Error("expected ok=false for missing thermal zone")
 	}
 }
 
 // The gate must return immediately when cool, when disabled, and when the
 // thermal zone is unreadable — it may only wait when genuinely hot.
-func TestWaitForCoolSoC_NoWaitCases(t *testing.T) {
+func TestWait_NoWaitCases(t *testing.T) {
 	ctx := context.Background()
 
-	// Disabled.
 	start := time.Now()
-	waitForCoolSoC(ctx, 0, testLogger())
+	Wait(ctx, 0, testLogger()) // disabled
 	if time.Since(start) > time.Second {
 		t.Error("disabled gate waited")
 	}
 
-	// Cool chip (45°C vs 70 limit).
-	setTempFixture(t, "45000")
+	setTempFixture(t, "45000") // cool: 45°C vs 70 limit
 	start = time.Now()
-	waitForCoolSoC(ctx, 70, testLogger())
+	Wait(ctx, 70, testLogger())
 	if time.Since(start) > time.Second {
 		t.Error("cool gate waited")
 	}
 }
 
 // A hot chip with a cancelled context must not block.
-func TestWaitForCoolSoC_HotHonorsContext(t *testing.T) {
+func TestWait_HotHonorsContext(t *testing.T) {
 	setTempFixture(t, "82000") // 82°C, limit 70
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	done := make(chan struct{})
 	go func() {
-		waitForCoolSoC(ctx, 70, testLogger())
+		Wait(ctx, 70, testLogger())
 		close(done)
 	}()
 	select {

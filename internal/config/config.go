@@ -18,6 +18,15 @@ type Config struct {
 	// GOMEMLIMIT environment variable is set.
 	MemoryLimitMB int `mapstructure:"memory_limit_mb" json:"memory_limit_mb"`
 
+	// ThermalLimitC defers every heavy processing step (timelapse encode,
+	// keogram, star trails, WebP conversion) while the SoC is hotter than
+	// this (°C), rechecking every 2 minutes for up to 30 minutes per step.
+	// Keeps processing heat off an already-hot chip (frequency capping, SDIO
+	// WiFi instability on Pi Zero 2). Recommended 70 on Pi-class hardware.
+	// 0 = disabled. Propagates to timelapse.thermal_limit_c when that is
+	// unset.
+	ThermalLimitC int `mapstructure:"thermal_limit_c" json:"thermal_limit_c"`
+
 	Camera   CameraConfig   `mapstructure:"camera"    json:"camera"`
 	Location LocationConfig `mapstructure:"location"  json:"location"`
 	Day      ModeConfig     `mapstructure:"day"       json:"day"`
@@ -370,11 +379,18 @@ func Load(configPath string) (*Config, error) {
 		cfg.Day.SaveRaw = true
 	}
 
+	// The global thermal limit covers the timelapse encoder too unless a
+	// timelapse-specific limit was set explicitly.
+	if cfg.Output.Timelapse.ThermalLimitC == 0 {
+		cfg.Output.Timelapse.ThermalLimitC = cfg.ThermalLimitC
+	}
+
 	return &cfg, nil
 }
 
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("memory_limit_mb", 0)
+	v.SetDefault("thermal_limit_c", 0)
 	v.SetDefault("camera.type", "libcamera")
 	v.SetDefault("camera.index", 0)
 	v.SetDefault("camera.device", 0)

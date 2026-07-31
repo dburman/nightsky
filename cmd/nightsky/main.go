@@ -23,6 +23,7 @@ import (
 	"github.com/dburman/nightsky/internal/keogram"
 	"github.com/dburman/nightsky/internal/sdnotify"
 	"github.com/dburman/nightsky/internal/startrails"
+	"github.com/dburman/nightsky/internal/thermal"
 	"github.com/dburman/nightsky/internal/timelapse"
 	"github.com/dburman/nightsky/internal/upload"
 	"github.com/dburman/nightsky/internal/whitebalance"
@@ -690,9 +691,20 @@ func runNightEndProcessing(
 	// The quick outputs (keogram, star trails, WB analysis) run before the
 	// timelapse encode, so they're available minutes after dawn instead of
 	// waiting behind the longest job.
+	// Effective thermal limit for the synthesis steps: the global limit, or
+	// the timelapse-specific one when only that was configured (the encoder
+	// additionally gates itself internally).
+	thermalLimit := cfg.ThermalLimitC
+	if thermalLimit == 0 {
+		thermalLimit = cfg.Output.Timelapse.ThermalLimitC
+	}
+
 	step := func(name string, timeout time.Duration, fn func(context.Context) error) {
 		stepCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
+		// Let the SoC cool before adding this step's heat; each step gets
+		// its own gate since the previous one may have warmed the chip.
+		thermal.Wait(stepCtx, thermalLimit, logger)
 		err := fn(stepCtx)
 		if stepCtx.Err() == context.DeadlineExceeded {
 			logger.Error("night-end step timed out and was skipped", "step", name, "timeout", timeout)
