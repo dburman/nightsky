@@ -168,6 +168,11 @@ output:
     # Skip generation when the moon was up most of the night and >40%
     # illuminated (moonlight washes out trails). Default off.
     skip_moonlit: false
+  # Top-5 best frames of the night (ranked by stars × clear sky), copied to
+  # protected highlight-N-* names that survive raw pruning and listed in
+  # highlights-<date>.json for the web gallery's Highlights tab.
+  highlights:
+    enabled: true
 
   timelapse:
     enabled: true

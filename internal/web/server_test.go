@@ -21,6 +21,8 @@ func testServer(t *testing.T) (*Server, string) {
 	dir := t.TempDir()
 	cfg := &config.Config{}
 	cfg.Output.Directory = dir
+	// Defaulted to true by the config loader, which a struct literal bypasses.
+	cfg.Output.Highlights.Enabled = true
 	srv := New(cfg, ":0", slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
 	return srv, dir
 }
@@ -199,5 +201,31 @@ func TestOutput_RejectsTraversal(t *testing.T) {
 
 	if rec.Code == http.StatusOK {
 		t.Fatalf("traversal returned 200 with body %q", rec.Body.String())
+	}
+}
+
+// The gallery needs to tell "no good frames tonight" apart from "the feature
+// is switched off" when the Highlights tab is empty.
+func TestDateImages_ReportsHighlightsDisabled(t *testing.T) {
+	srv, dir := testServer(t)
+	srv.cfg.Output.Highlights.Enabled = false
+	writeTestPNG(t, filepath.Join(dir, "2026-06-10", "allsky-1.png"))
+
+	ts := httptest.NewServer(srv.routes())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/captures/2026-06-10/images")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		HighlightsEnabled bool `json:"highlights_enabled"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.HighlightsEnabled {
+		t.Error("highlights_enabled = true, want false")
 	}
 }

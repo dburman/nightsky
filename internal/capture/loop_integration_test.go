@@ -184,6 +184,8 @@ func TestLoop_FullNight(t *testing.T) {
 		m.SkipFrames = 1
 		m.MeteringZone = "center"
 	}
+	// Defaulted to true by the config loader, which a struct literal bypasses.
+	cfg.Output.Highlights.Enabled = true
 	cfg.Alerts.WebhookURL = hook.URL
 	cfg.Alerts.NightSummary = true
 	cfg.Alerts.Aurora = config.AuroraAlertConfig{
@@ -196,7 +198,16 @@ func TestLoop_FullNight(t *testing.T) {
 	loop.Notifier = alerts.NewNotifier(hook.URL, logger)
 
 	nightEnds := make(chan string, 2)
-	loop.OnNightEnd = func(dir string) { nightEnds <- dir }
+	// Highlights must already be on disk before the synthesis suite starts, so
+	// a step that OOMs or times out mid-suite cannot take the night's best
+	// frames with it. OnNightEnd stands in for that suite. The channel send
+	// orders this write against the test's read below.
+	var highlightsBeforeSynthesis bool
+	loop.OnNightEnd = func(dir string) {
+		_, err := os.Stat(filepath.Join(dir, "highlights-"+filepath.Base(dir)+".json"))
+		highlightsBeforeSynthesis = err == nil
+		nightEnds <- dir
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -259,6 +270,9 @@ waitLoop:
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "2026-06-10", "highlights-2026-06-10.json")); err != nil {
 		t.Errorf("highlights manifest missing: %v", err)
+	}
+	if !highlightsBeforeSynthesis {
+		t.Error("highlights were not written before end-of-night synthesis began")
 	}
 	// Highlights are protected copies that survive raw pruning.
 	copies, _ := filepath.Glob(filepath.Join(outDir, "2026-06-10", "highlight-*-test-*.png"))

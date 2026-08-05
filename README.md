@@ -25,11 +25,11 @@ Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripp
 - **Configurable metering zone** — Choose which sky region drives auto-exposure: `full` (whole frame), `center` (inner 50%-radius circle, ideal for zenith-pointing fisheye cameras), or `top` (top third, for horizon-facing cameras)
 - **Histogram stretch** — Linear remap of `[black, white] → [0, 255]` applied to saved images for contrast enhancement. Auto mode derives black/white points from configurable percentiles of frame luminance (default 10th/99.9th — tuned for dark skies); manual mode accepts explicit values. Does not affect dark/flat calibration.
 - **GPS auto-location** — Automatically fetches latitude/longitude from a local `gpsd` daemon at startup (requires `gpsd`), overriding config coordinates. Falls back gracefully to configured values if no fix is available.
-- **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs.
+- **Cloud coverage metric** — Estimates cloud cover per frame from mean luminance and standard deviation of the sky region. Writes `cloud-YYYY-MM-DD.csv` at end of night alongside other synthesized outputs, one row per frame: `timestamp,mean,stddev,coverage,green_ratio,stars,fwhm,file`. Columns are only ever appended, so older reports still parse.
 - **Aurora alerting** — Watches the sky's green ratio against a rolling baseline and pushes a webhook notification (ntfy-compatible) when a sustained green excess appears under clear skies. One alert per surge, re-armed after quiet.
 - **Moon awareness** — Built-in lunar position/phase math: optionally raises the auto-exposure target while the moon is up (`moon_target_boost`), skips star trails on bright moonlit nights (`skip_moonlit`), and reports moon state in the live metrics.
 - **Star metrics + focus aid** — Counts point sources and measures their sharpness (FWHM) on night frames; logged to the nightly CSV, shown live in the web UI, and served on demand at `/api/focus` for focusing the lens (maximize stars, minimize FWHM).
-- **Night summary & highlights** — Optional dawn notification with the night's statistics, plus an automatic top-5 highlight selection (stars × clear sky): the best frames are copied to protected `highlight-N-*` names that survive raw pruning and shown on a dedicated Highlights tab in the web gallery.
+- **Night summary & highlights** — Optional dawn notification with the night's statistics, plus an automatic top-5 highlight selection (stars × clear sky): the best frames are copied to protected `highlight-N-*` names that survive raw pruning and shown on a dedicated Highlights tab in the web gallery. Written at the night→day transition; if that run is interrupted, `nightsky process` rebuilds the manifest from the nightly CSV.
 - **Live `/latest` endpoint** — `GET /latest` on the web server always returns the most recently captured image. Supports `?w=N` for on-the-fly resizing. Useful for embedding a live view in external dashboards.
 - **Live metrics endpoint** — `GET /api/metrics` returns the current capture state as JSON (mode, exposure, gain, mean brightness, cloud coverage, sensor temperature, frame count). Written to `.metrics.json` after every frame so it works across process boundaries in Docker Compose and systemd split-service deployments.
 - **Web UI** — Built-in HTTP server (`nightsky serve`) with Configuration, Captures, and Live tabs. Captures tab: browse by date with Video, Keogram, Star Trails, and Images sub-tabs, paginated lazy-loaded thumbnails. Live tab: auto-refreshing current frame with real-time metrics sidebar (exposure, gain, brightness, cloud coverage bar, sensor temperature). No external dependencies, embedded in the binary.
@@ -549,7 +549,9 @@ Global Flags:
 
 Runs the main capture loop. Automatically detects day/night based on sun position and applies the corresponding settings. All images from a single night session are kept in one directory named after the night's start date, even when captures cross midnight.
 
-At the end of each night the synthesis suite runs sequentially (one memory-heavy job at a time), quick outputs first: keogram, star trails, white balance analysis, then the timelapse encode (uploaded in the background when configured), then WebP conversion, and finally disk cleanup. Day capture continues concurrently — end-of-night processing runs in the background.
+At the end of each night the highlights manifest is written first — it is cheap and depends only on frames already on disk, so it survives anything that later interrupts the heavy work. Then the synthesis suite runs sequentially (one memory-heavy job at a time), quick outputs first: keogram, star trails, white balance analysis, then the timelapse encode (uploaded in the background when configured), then WebP conversion, and finally disk cleanup. Day capture continues concurrently — end-of-night processing runs in the background.
+
+Each step honours its own enable flag: `output.keogram.enabled`, `output.startrails.enabled`, `output.timelapse.enabled`, `output.webp.enabled`, and `output.highlights.enabled` (all default true except WebP). Disabling highlights skips both the manifest and the protected `highlight-N-*` copies; manifests already written for earlier nights are left in place.
 
 ```bash
 nightsky capture
@@ -687,7 +689,7 @@ Suggested: WB Red=61  WB Blue=67
 
 ### `nightsky process`
 
-Runs the full end-of-night processing pipeline on an existing capture directory: timelapse, keogram, star trails, white balance analysis, and WebP conversion. Each output respects its enabled/disabled flag in the config. Useful when the capture loop was stopped before dawn and end-of-night processing never ran, or to regenerate outputs for historical directories.
+Runs the full end-of-night processing pipeline on an existing capture directory: timelapse, keogram, star trails, white balance analysis, WebP conversion, and the highlights manifest. Each output respects its enabled/disabled flag in the config. Useful when the capture loop was stopped before dawn and end-of-night processing never ran, or to regenerate outputs for historical directories.
 
 ```bash
 # Most recent capture directory
@@ -696,6 +698,8 @@ nightsky process
 # Specific directory
 nightsky process --dir ./output/2026-05-14
 ```
+
+Highlights are rebuilt from the night's `cloud-*.csv`, so this also recovers them for a night whose live run was interrupted before the highlights step — the capture loop writes them only at the night→day transition, from metrics held in memory. Nights recorded before the CSV carried a `file` column are still backfilled by matching each metric's timestamp against the frames on disk.
 
 ### `nightsky webp`
 

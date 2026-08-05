@@ -224,14 +224,23 @@ func (l *Loop) Run(ctx context.Context) error {
 								)
 							}
 						}
+						// Highlights run before the synthesis suite rather
+						// than after it. They need only the metrics in hand
+						// and the frames already on disk, so there is nothing
+						// to wait for — and anything that cuts the hours of
+						// keogram, star-trail and encode work below short
+						// (OOM kill, watchdog restart, a step timing out)
+						// would otherwise take the night's best frames with
+						// it. WebP conversion skips highlight-* names, so the
+						// protected copies outlive it either way.
+						if l.cfg.Output.Highlights.Enabled {
+							WriteHighlights(nightDir, nightMetrics, l.logger)
+						}
 						// Drain any in-flight segment encodes before finalizing.
 						segWg.Wait()
 						if l.OnNightEnd != nil {
 							l.OnNightEnd(nightDir)
 						}
-						// Highlights come after processing so filenames
-						// survive WebP conversion.
-						writeHighlights(nightDir, nightMetrics, l.logger)
 						// Summary goes out after processing so the timelapse
 						// and keogram it points at already exist.
 						if l.cfg.Alerts.NightSummary {
@@ -686,20 +695,28 @@ type Highlight struct {
 	Cloud float64 `json:"cloud"`
 }
 
-// writeHighlights ranks the night's frames by star count weighted by clear
+// WriteHighlights ranks the night's frames by star count weighted by clear
 // sky, copies the top picks to protected highlight-N-<file> names that
-// survive raw pruning, and writes the manifest to highlights-<date>.json in
-// nightDir. Runs after end-of-night processing so WebP-converted filenames
-// can be resolved (entries whose original file is gone fall back to the
-// .webp twin; frames that vanished entirely are skipped).
-func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
+// survive raw pruning and WebP conversion, and writes the manifest to
+// highlights-<date>.json in nightDir.
+//
+// Runs ahead of the end-of-night synthesis suite: it needs nothing that
+// suite produces, and going first keeps the night's best frames out of the
+// blast radius of a step that OOMs or times out. Frames already converted by
+// an earlier pass resolve via their .webp twin; frames that vanished
+// entirely are skipped.
+//
+// Safe to re-run: `nightsky process` calls it with metrics read back from the
+// night's CSV, which regenerates highlights for a night whose live run was
+// interrupted.
+func WriteHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 	type scored struct {
 		m     cloud.Metric
 		score float64
 	}
 	var candidates []scored
 	for _, m := range ms {
-		if m.File == "" || m.StarCount == 0 {
+		if m.StarCount == 0 {
 			continue
 		}
 		candidates = append(candidates, scored{m, float64(m.StarCount) * (1 - m.Coverage)})
@@ -725,13 +742,9 @@ func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 		if len(picks) >= highlightCount {
 			break
 		}
-		file := c.m.File
-		if _, err := os.Stat(filepath.Join(nightDir, file)); err != nil {
-			webp := strings.TrimSuffix(file, filepath.Ext(file)) + ".webp"
-			if _, err := os.Stat(filepath.Join(nightDir, webp)); err != nil {
-				continue
-			}
-			file = webp
+		file := resolveFrameFile(nightDir, c.m)
+		if file == "" {
+			continue
 		}
 
 		// Copy to a protected name the raw pruner keeps, so the night's best
@@ -768,6 +781,46 @@ func writeHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
 		return
 	}
 	logger.Info("night highlights written", "path", path, "frames", len(picks))
+}
+
+// frameExts are the saved frame formats a highlight may point at; .dng is
+// excluded because the web UI cannot display it.
+var frameExts = []string{".png", ".jpg", ".jpeg", ".webp"}
+
+// resolveFrameFile returns the on-disk filename backing a metric's frame, or
+// "" when the frame is gone. It prefers the recorded name, falls back to the
+// .webp twin left behind by conversion, and finally matches on the timestamp
+// embedded in the filename — the last case backfills nights whose CSV predates
+// the file column, where the metric carries no filename at all.
+func resolveFrameFile(nightDir string, m cloud.Metric) string {
+	if m.File != "" {
+		if _, err := os.Stat(filepath.Join(nightDir, m.File)); err == nil {
+			return m.File
+		}
+		webp := strings.TrimSuffix(m.File, filepath.Ext(m.File)) + ".webp"
+		if _, err := os.Stat(filepath.Join(nightDir, webp)); err == nil {
+			return webp
+		}
+		return ""
+	}
+
+	matches, err := filepath.Glob(filepath.Join(nightDir, "*-"+m.Timestamp.Format("20060102150405")+".*"))
+	if err != nil {
+		return ""
+	}
+	slices.Sort(matches)
+	for _, p := range matches {
+		name := filepath.Base(p)
+		// Never pick a previous run's protected copy: doing so would nest
+		// highlight- prefixes on every re-run.
+		if highlightCopyRe.MatchString(strings.ToLower(name)) {
+			continue
+		}
+		if slices.Contains(frameExts, strings.ToLower(filepath.Ext(name))) {
+			return name
+		}
+	}
+	return ""
 }
 
 // highlightCopyRe matches protected highlight frame copies (not the

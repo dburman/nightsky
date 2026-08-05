@@ -16,6 +16,7 @@ import (
 	"github.com/dburman/nightsky/internal/camera"
 	"github.com/dburman/nightsky/internal/camera/libcamera"
 	"github.com/dburman/nightsky/internal/capture"
+	"github.com/dburman/nightsky/internal/cloud"
 	"github.com/dburman/nightsky/internal/config"
 	"github.com/dburman/nightsky/internal/convert"
 	"github.com/dburman/nightsky/internal/flat"
@@ -878,6 +879,22 @@ func processCmd() *cobra.Command {
 			}()
 
 			applyMemoryLimit(cfg, logger)
+
+			// Highlights first, for the same reason the capture loop writes
+			// them first: they are cheap, they depend only on the CSV and the
+			// frames already on disk, and the synthesis suite below is the
+			// part that gets killed on memory-constrained boards. Rebuilding
+			// from the CSV is also what lets this command recover a manifest
+			// the live run never got to.
+			if cfg.Output.Highlights.Enabled {
+				ms, err := cloud.ReadReport(dir)
+				if err != nil {
+					logger.Warn("skipping highlights: no readable sky metrics", "dir", dir, "error", err)
+				} else {
+					capture.WriteHighlights(dir, ms, logger)
+				}
+			}
+
 			runNightEndProcessing(ctx, dir, cfg, nil, nil, logger)
 			return nil
 		},

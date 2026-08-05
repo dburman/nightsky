@@ -12,10 +12,20 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	imgutil "github.com/dburman/nightsky/internal/image"
+)
+
+const (
+	// csvHeader is the column layout of cloud-<date>.csv. Columns are only
+	// ever appended, so ReadReport can still parse older files.
+	csvHeader = "timestamp,mean,stddev,coverage,green_ratio,stars,fwhm,file"
+	// csvTimeLayout is the zoneless local timestamp written per row.
+	csvTimeLayout = "2006-01-02T15:04:05"
 )
 
 // Metric holds sky statistics for a single frame.
@@ -33,8 +43,7 @@ type Metric struct {
 	StarCount int
 	StarFWHM  float64
 	// File is the saved frame's filename (no directory), filled by the
-	// capture loop; used to build the nightly highlights manifest. Not
-	// written to the CSV.
+	// capture loop; used to build the nightly highlights manifest.
 	File string
 }
 
@@ -136,15 +145,99 @@ func WriteReport(dir string, metrics []Metric) error {
 
 	w := bufio.NewWriter(f)
 	if needHeader {
-		fmt.Fprintln(w, "timestamp,mean,stddev,coverage,green_ratio,stars,fwhm")
+		fmt.Fprintln(w, csvHeader)
 	}
 	for _, m := range metrics {
-		fmt.Fprintf(w, "%s,%.2f,%.2f,%.3f,%.3f,%d,%.2f\n",
-			m.Timestamp.Format("2006-01-02T15:04:05"),
+		// file is last so readers that index the older 7-column layout keep
+		// working, and so an empty value needs no placeholder.
+		fmt.Fprintf(w, "%s,%.2f,%.2f,%.3f,%.3f,%d,%.2f,%s\n",
+			m.Timestamp.Format(csvTimeLayout),
 			m.Mean, m.StdDev, m.Coverage, m.GreenRatio, m.StarCount, m.StarFWHM,
+			m.File,
 		)
 	}
 	return w.Flush()
+}
+
+// ReadReport loads the sky metrics recorded for a night. It reads every
+// cloud-*.csv in dir rather than a single expected name, because WriteReport
+// derives the filename from the first metric's date, which differs from the
+// directory name when a session's first retained frame lands after midnight.
+// Rows are returned in timestamp order. CSVs written before a column existed
+// yield zero values for it — notably File, which is empty for nights recorded
+// before the filename column was added.
+func ReadReport(dir string) ([]Metric, error) {
+	paths, err := filepath.Glob(filepath.Join(dir, "cloud-*.csv"))
+	if err != nil {
+		return nil, fmt.Errorf("glob cloud reports: %w", err)
+	}
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no cloud report found in %s", dir)
+	}
+
+	var metrics []Metric
+	for _, path := range paths {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open cloud report: %w", err)
+		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			// Skip blanks, the header, and the "# summary" trailer.
+			if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "timestamp,") {
+				continue
+			}
+			if m, ok := parseMetricRow(line); ok {
+				metrics = append(metrics, m)
+			}
+		}
+		cerr := sc.Err()
+		f.Close()
+		if cerr != nil {
+			return nil, fmt.Errorf("read cloud report: %w", cerr)
+		}
+	}
+
+	slices.SortFunc(metrics, func(a, b Metric) int {
+		return a.Timestamp.Compare(b.Timestamp)
+	})
+	return metrics, nil
+}
+
+// parseMetricRow parses one CSV data row. It returns false for rows whose
+// timestamp is unreadable; trailing columns absent in older files are left at
+// their zero value rather than failing the row.
+func parseMetricRow(line string) (Metric, bool) {
+	fields := strings.Split(line, ",")
+	if len(fields) < 4 {
+		return Metric{}, false
+	}
+	ts, err := time.ParseInLocation(csvTimeLayout, fields[0], time.Local)
+	if err != nil {
+		return Metric{}, false
+	}
+	m := Metric{Timestamp: ts}
+	atof := func(i int) float64 {
+		if i >= len(fields) {
+			return 0
+		}
+		v, _ := strconv.ParseFloat(strings.TrimSpace(fields[i]), 64)
+		return v
+	}
+	m.Mean = atof(1)
+	m.StdDev = atof(2)
+	m.Coverage = atof(3)
+	m.GreenRatio = atof(4)
+	if len(fields) > 5 {
+		n, _ := strconv.Atoi(strings.TrimSpace(fields[5]))
+		m.StarCount = n
+	}
+	m.StarFWHM = atof(6)
+	if len(fields) > 7 {
+		m.File = strings.TrimSpace(fields[7])
+	}
+	return m, true
 }
 
 // SummaryLine returns a human-readable summary of the night's cloud coverage.

@@ -187,6 +187,8 @@ type OutputConfig struct {
 	Keogram KeogramConfig `mapstructure:"keogram"          json:"keogram"`
 	// StarTrails settings.
 	StarTrails StarTrailsConfig `mapstructure:"startrails"       json:"startrails"`
+	// Highlights settings.
+	Highlights HighlightsConfig `mapstructure:"highlights"       json:"highlights"`
 	// WebP conversion settings.
 	WebP WebPConfig `mapstructure:"webp"             json:"webp"`
 }
@@ -215,6 +217,15 @@ type StarTrailsConfig struct {
 	// and skipping is an informed decision instead of a brightness-filter
 	// failure.
 	SkipMoonlit bool `mapstructure:"skip_moonlit" json:"skip_moonlit"`
+}
+
+// HighlightsConfig controls the end-of-night best-frames manifest.
+type HighlightsConfig struct {
+	// Enabled ranks the night's frames and writes highlights-<date>.json plus
+	// the protected highlight-N-* copies (default true). When false, no
+	// manifest is written and the web gallery's Highlights tab stays empty;
+	// existing manifests and copies from earlier nights are left alone.
+	Enabled bool `mapstructure:"enabled" json:"enabled"`
 }
 
 // StretchConfig controls histogram stretching applied to saved images.
@@ -478,6 +489,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.keogram.enabled", true)
 	v.SetDefault("output.startrails.enabled", true)
 	v.SetDefault("output.startrails.skip_moonlit", false)
+	v.SetDefault("output.highlights.enabled", true)
 
 	v.SetDefault("output.webp.enabled", false)
 	v.SetDefault("output.webp.quality", 85)

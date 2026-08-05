@@ -834,11 +834,12 @@ function renderConfig(cfg) {
       </div>
 
       <div class="card">
-        <div class="card-title">Keogram &amp; Star Trails</div>
+        <div class="card-title">Night Outputs</div>
         ${kv([
           ['Keogram',      badge(cfg.output.keogram.enabled)],
           ['Star Trails',  badge(cfg.output.startrails.enabled)],
           ['Skip Moonlit', badge(cfg.output.startrails.skip_moonlit)],
+          ['Highlights',   badge(cfg.output.highlights?.enabled)],
         ])}
       </div>
 
@@ -1095,7 +1096,7 @@ function renderDateContent(date) {
   if (activeSub === 'images') {
     renderImages(el, data.images || []);
   } else if (activeSub === 'highlights') {
-    renderHighlights(el, data.highlights || [], date);
+    renderHighlights(el, data.highlights || [], date, data.highlights_enabled !== false);
   } else if (activeSub === 'keogram') {
     renderKeogram(el, data.keogram, date);
   } else if (activeSub === 'startrails') {
@@ -1204,9 +1205,12 @@ function renderImages(container, images) {
   appendPage();
 }
 
-function renderHighlights(container, highlights, date) {
+function renderHighlights(container, highlights, date, enabled = true) {
   if (!highlights || highlights.length === 0) {
-    container.innerHTML = `<div class="empty"><div class="empty-icon">✦</div>No highlights for ${esc(date)}.<br><span style="font-size:12px;color:var(--muted)">The night's best frames (stars × clear sky) are selected at dawn.</span></div>`;
+    const hint = enabled
+      ? "The night's best frames (stars × clear sky) are selected at dawn."
+      : 'Highlights are disabled in the configuration (output.highlights.enabled).';
+    container.innerHTML = `<div class="empty"><div class="empty-icon">✦</div>No highlights for ${esc(date)}.<br><span style="font-size:12px;color:var(--muted)">${hint}</span></div>`;
     return;
   }
 

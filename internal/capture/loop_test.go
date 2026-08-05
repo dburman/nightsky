@@ -1,6 +1,9 @@
 package capture
 
 import (
+	"encoding/json"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,5 +100,83 @@ func TestNightSummaryMessage(t *testing.T) {
 func TestSweepStaleTmp_MissingDir(t *testing.T) {
 	if n := sweepStaleTmp(filepath.Join(t.TempDir(), "nope")); n != 0 {
 		t.Errorf("missing dir should sweep nothing, got %d", n)
+	}
+}
+
+// Backfill path: metrics read from a CSV predating the file column carry no
+// filename, so WriteHighlights must recover the frame from its timestamp.
+func TestWriteHighlights_BackfillsByTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	base := time.Date(2026, 8, 4, 22, 34, 17, 0, time.Local)
+	var ms []cloud.Metric
+	for i := 0; i < 3; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute)
+		name := "sky-" + ts.Format("20060102150405") + ".png"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("frame"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		ms = append(ms, cloud.Metric{
+			Timestamp: ts,
+			StarCount: 100 + i, // last frame scores highest
+			Coverage:  0.4,
+			// File deliberately empty — the legacy CSV had no such column.
+		})
+	}
+
+	WriteHighlights(dir, ms, logger)
+
+	data, err := os.ReadFile(filepath.Join(dir, "highlights-"+filepath.Base(dir)+".json"))
+	if err != nil {
+		t.Fatalf("manifest not written: %v", err)
+	}
+	var manifest struct {
+		Frames []struct {
+			File  string `json:"file"`
+			Stars int    `json:"stars"`
+		} `json:"frames"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("bad manifest: %v", err)
+	}
+	if len(manifest.Frames) != 3 {
+		t.Fatalf("got %d frames, want 3", len(manifest.Frames))
+	}
+	// Highest star count ranks first, and the pick is a protected copy.
+	top := manifest.Frames[0]
+	if top.Stars != 102 {
+		t.Errorf("top frame stars = %d, want 102", top.Stars)
+	}
+	want := "highlight-1-sky-" + base.Add(2*time.Minute).Format("20060102150405") + ".png"
+	if top.File != want {
+		t.Errorf("top frame file = %q, want %q", top.File, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+		t.Errorf("protected copy missing: %v", err)
+	}
+}
+
+// Re-running must not nest highlight- prefixes or pick a prior run's copies.
+func TestWriteHighlights_RerunIsStable(t *testing.T) {
+	dir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	ts := time.Date(2026, 8, 4, 22, 34, 17, 0, time.Local)
+	name := "sky-" + ts.Format("20060102150405") + ".png"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("frame"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ms := []cloud.Metric{{Timestamp: ts, StarCount: 50, Coverage: 0.2}}
+
+	WriteHighlights(dir, ms, logger)
+	WriteHighlights(dir, ms, logger)
+
+	copies, _ := filepath.Glob(filepath.Join(dir, "highlight-*-*.png"))
+	if len(copies) != 1 {
+		t.Fatalf("got %d protected copies after re-run, want 1: %v", len(copies), copies)
+	}
+	if got := filepath.Base(copies[0]); got != "highlight-1-"+name {
+		t.Errorf("copy = %q, want %q", got, "highlight-1-"+name)
 	}
 }

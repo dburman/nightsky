@@ -217,9 +217,12 @@ type dateImagesResponse struct {
 	Date       string           `json:"date"`
 	Images     []imageEntry     `json:"images"`
 	Highlights []highlightEntry `json:"highlights,omitempty"`
-	Video      string           `json:"video,omitempty"`
-	Keogram    string           `json:"keogram,omitempty"`
-	StarTrails string           `json:"startrails,omitempty"`
+	// HighlightsEnabled lets the gallery distinguish "none selected for this
+	// night" from "the feature is switched off" on an empty Highlights tab.
+	HighlightsEnabled bool   `json:"highlights_enabled"`
+	Video             string `json:"video,omitempty"`
+	Keogram           string `json:"keogram,omitempty"`
+	StarTrails        string `json:"startrails,omitempty"`
 }
 
 // loadHighlights reads the night's highlights manifest, returning nil when
@@ -327,12 +330,13 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 	})
 
 	resp := dateImagesResponse{
-		Date:       date,
-		Images:     images,
-		Highlights: loadHighlights(dirPath, date),
-		Video:      videoURL,
-		Keogram:    keogramURL,
-		StarTrails: startrailsURL,
+		Date:              date,
+		Images:            images,
+		Highlights:        loadHighlights(dirPath, date),
+		HighlightsEnabled: s.cfg.Output.Highlights.Enabled,
+		Video:             videoURL,
+		Keogram:           keogramURL,
+		StarTrails:        startrailsURL,
 	}
 	s.writeJSON(w, resp)
 }
