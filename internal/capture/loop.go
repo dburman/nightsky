@@ -2,13 +2,11 @@ package capture
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"image"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -56,28 +54,25 @@ func (m Mode) String() string {
 // day and night modes based on sun position, capturing images, applying overlays,
 // and saving them to disk.
 type Loop struct {
-	cam     camera.Camera
-	cfg     *config.Config
-	logger  *slog.Logger
+	cam    camera.Camera
+	cfg    *config.Config
+	logger *slog.Logger
 
 	// State.
-	mode            Mode
-	nightSessionDir string // set when night begins, cleared at dawn
-	exposureCtrl    *ExposureController
-	darkMgr         *DarkFrameManager
-	flatMgr         *flat.Manager
-	frameCount      int64
-	skipRemaining   int
-	failureStreak   int  // consecutive capture failures, for backoff and reinit
-	rawWarned       bool // de-dups raw-calibration fallback warnings
-	lastCaptured    time.Time // when the camera last delivered a frame, for the staleness tripwire
-	cloudMetrics    []cloud.Metric // accumulated per-frame cloud metrics for the current night
-
-	// Iterative timelapse state (used when SegmentFrames > 0). segmentWg is
-	// per night session — end-of-night processing waits on the finished
-	// night's group while a new session gets a fresh one.
-	nightFrameCount int
-	segmentWg       *sync.WaitGroup
+	mode Mode
+	// night holds the in-progress night's directory, metrics, timelapse
+	// segments and alert count. initMode creates it whenever mode is
+	// ModeNight and clears it at dawn, so every night-mode code path may
+	// assume it is non-nil; during the day it is nil.
+	night         *nightSession
+	exposureCtrl  *ExposureController
+	darkMgr       *DarkFrameManager
+	flatMgr       *flat.Manager
+	frameCount    int64
+	skipRemaining int
+	failureStreak int       // consecutive capture failures, for backoff and reinit
+	rawWarned     bool      // de-dups raw-calibration fallback warnings
+	lastCaptured  time.Time // when the camera last delivered a frame, for the staleness tripwire
 
 	// nightEndWg tracks in-flight end-of-night processing goroutines so Run
 	// drains them before returning.
@@ -95,9 +90,8 @@ type Loop struct {
 	// summaries. A nil notifier disables both.
 	Notifier *alerts.Notifier
 
-	auroraDet    *alerts.AuroraDetector // nil unless aurora alerting is enabled
-	lastStars    stars.Result           // most recent star detection, for metrics
-	auroraEvents int                    // alerts fired this night, for the summary
+	auroraDet *alerts.AuroraDetector // nil unless aurora alerting is enabled
+	lastStars stars.Result           // most recent star detection, for metrics
 
 	// now supplies the wall clock for every mode/session/staleness decision;
 	// defaults to time.Now and is replaced by tests to simulate a night.
@@ -107,12 +101,11 @@ type Loop struct {
 // NewLoop creates a new capture loop.
 func NewLoop(cam camera.Camera, cfg *config.Config, logger *slog.Logger) *Loop {
 	l := &Loop{
-		cam:       cam,
-		cfg:       cfg,
-		logger:    logger,
-		thumbSem:  make(chan struct{}, 2),
-		segmentWg: &sync.WaitGroup{},
-		now:       time.Now,
+		cam:      cam,
+		cfg:      cfg,
+		logger:   logger,
+		thumbSem: make(chan struct{}, 2),
+		now:      time.Now,
 	}
 
 	// Initialize dark frame manager if enabled.
@@ -190,132 +183,15 @@ func (l *Loop) Run(ctx context.Context) error {
 		default:
 		}
 
-		// Check for mode transition.
-		newMode := l.currentMode()
-		if newMode != l.mode {
-			l.logger.Info("mode transition", "from", l.mode, "to", newMode)
-
-			// End-of-night processing runs in the background so day capture
-			// starts immediately instead of stalling behind timelapse
-			// encoding (encodes are niced, so they yield CPU to capture).
-			// The goroutine owns the finished night's metrics and segment
-			// WaitGroup; initMode gives the next session fresh ones.
-			if l.mode == ModeNight && newMode == ModeDay {
-				if l.nightSessionDir != "" {
-					nightDir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
-					nightMetrics := l.cloudMetrics
-					auroraEvents := l.auroraEvents
-					segWg := l.segmentWg
-					l.cloudMetrics = nil
-					l.auroraEvents = 0
-
-					l.nightEndWg.Add(1)
-					go func() {
-						defer l.nightEndWg.Done()
-						// Flush cloud metrics before handing off to OnNightEnd.
-						if len(nightMetrics) > 0 {
-							if err := cloud.WriteReport(nightDir, nightMetrics); err != nil {
-								l.logger.Error("cloud report write failed", "error", err)
-							} else {
-								l.logger.Info("cloud coverage report written",
-									"dir", nightDir,
-									"frames", len(nightMetrics),
-									"summary", cloud.SummaryLine(nightMetrics),
-								)
-							}
-						}
-						// Highlights run before the synthesis suite rather
-						// than after it. They need only the metrics in hand
-						// and the frames already on disk, so there is nothing
-						// to wait for — and anything that cuts the hours of
-						// keogram, star-trail and encode work below short
-						// (OOM kill, watchdog restart, a step timing out)
-						// would otherwise take the night's best frames with
-						// it. WebP conversion skips highlight-* names, so the
-						// protected copies outlive it either way.
-						if l.cfg.Output.Highlights.Enabled {
-							WriteHighlights(nightDir, nightMetrics, l.logger)
-						}
-						// Drain any in-flight segment encodes before finalizing.
-						segWg.Wait()
-						if l.OnNightEnd != nil {
-							l.OnNightEnd(nightDir)
-						}
-						// Summary goes out after processing so the timelapse
-						// and keogram it points at already exist.
-						if l.cfg.Alerts.NightSummary {
-							date := filepath.Base(nightDir)
-							msg := nightSummaryMessage(date, nightMetrics, auroraEvents, l.cfg.Alerts.BaseURL)
-							if err := l.Notifier.Send(ctx, "Night summary "+date, msg); err != nil {
-								l.logger.Error("night summary delivery failed", "error", err)
-							}
-						}
-					}()
-				}
-				l.nightSessionDir = ""
-			}
-
-			l.mode = newMode
-			l.initMode()
-		}
+		l.applyModeTransition(ctx)
 
 		// Get mode settings.
 		modeCfg := l.modeConfig()
 
-		// Build capture settings.
-		settings := camera.CaptureSettings{
-			Exposure: l.exposureCtrl.Exposure,
-			Gain:     l.exposureCtrl.Gain,
-			Binning:  modeCfg.Binning,
-			WBRed:    modeCfg.WBRed,
-			WBBlue:   modeCfg.WBBlue,
-			AWB:      modeCfg.AWB,
-			Flip:     l.cfg.Camera.Flip,
-			Format:   camera.FormatRGB24,
-			Denoise:  modeCfg.Denoise,
-			SaveRaw:  modeCfg.SaveRaw,
-		}
-
-		// Apply cooler settings if applicable.
-		if modeCfg.CoolerEnabled {
-			l.cam.SetCooler(camera.CoolerSettings{
-				Enabled:    true,
-				TargetTemp: modeCfg.CoolerTarget,
-			})
-		}
-
-		// Capture frame. Grace period covers rpicam-still startup (3-10s on a Pi),
-		// the shutter open time, and image encoding before the context fires.
-		captureCtx, cancel := context.WithTimeout(ctx, settings.Exposure+120*time.Second)
-		result, err := l.cam.Capture(captureCtx, settings)
-		cancel()
-
+		result, err := l.captureFrame(ctx, modeCfg)
 		if err != nil {
-			l.failureStreak++
-			backoff := failureBackoff(l.failureStreak)
-			l.logger.Error("capture failed",
-				"error", err,
-				"consecutive_failures", l.failureStreak,
-				"retry_in", backoff,
-			)
-
-			// A persistent failure streak usually means a wedged device
-			// (USB stall, crashed pipeline) that retrying alone won't fix —
-			// cycle the camera connection.
-			if l.failureStreak%5 == 0 {
-				l.logger.Warn("reinitializing camera after repeated capture failures")
-				if cerr := l.cam.Close(); cerr != nil {
-					l.logger.Error("camera close failed", "error", cerr)
-				}
-				if oerr := l.cam.Open(); oerr != nil {
-					l.logger.Error("camera reopen failed", "error", oerr)
-				}
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
+			if werr := l.backOffAfterFailure(ctx, err); werr != nil {
+				return werr
 			}
 			continue
 		}
@@ -324,236 +200,8 @@ func (l *Loop) Run(ctx context.Context) error {
 
 		l.frameCount++
 
-		// Experimental raw pipeline (opt-in via output.raw_calibration; the
-		// flag guard keeps every raw code path inert when disabled). On
-		// success the frame image and metered mean both come from the linear
-		// raw data; any failure falls back to the standard processed image.
-		processedImg := result.Image
-		var meteredMean float64
-		rawCalibrated := false
-		if l.cfg.Output.RawCalibration && len(result.DNGData) > 0 {
-			img, mean, err := l.calibrateRaw(result, modeCfg)
-			if err != nil {
-				if !l.rawWarned {
-					l.logger.Warn("raw calibration failed; using standard processed image", "error", err)
-					l.rawWarned = true
-				}
-			} else {
-				processedImg, meteredMean = img, mean
-				rawCalibrated = true
-				l.rawWarned = false
-			}
-		}
-		if !rawCalibrated {
-			// Metered brightness for auto-exposure from the processed image.
-			meteredMean = ZoneMean(result.Image, modeCfg.MeteringZone)
-		}
-
-		// Moon-compensated auto-exposure: while the moon is up, raise the
-		// target proportionally to its illuminated fraction so the
-		// controller stops fighting moonlight with maximum gain.
-		if modeCfg.AutoExposure && modeCfg.MoonTargetBoost > 0 {
-			target := modeCfg.TargetBrightness
-			now := l.now()
-			if astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude > 0 {
-				target *= 1 + modeCfg.MoonTargetBoost*astro.MoonPhase(now)
-			}
-			l.exposureCtrl.TargetBrightness = target
-		}
-
-		// Skip frames after mode transition.
-		if l.skipRemaining > 0 {
-			l.skipRemaining--
-			l.logger.Debug("skipping frame", "remaining", l.skipRemaining)
-			if modeCfg.AutoExposure {
-				l.exposureCtrl.Adjust(meteredMean)
-			}
+		if l.processFrame(ctx, result, modeCfg) == frameAborted {
 			continue
-		}
-
-		// Dark frame subtraction (8-bit path). Select the dark matching this
-		// frame's actual exposure/gain (which drift under auto-exposure), not
-		// the mode's configured base. Skipped when the raw pipeline already
-		// subtracted a linear master dark.
-		if !rawCalibrated && l.darkMgr != nil {
-			dark := l.darkMgr.SelectDark(DarkFrameKey{
-				Exposure: result.Meta.Exposure,
-				Gain:     result.Meta.Gain,
-				Binning:  modeCfg.Binning,
-			})
-			if dark != nil {
-				processedImg = SubtractDark(processedImg, dark)
-			}
-		}
-
-		// Flat field correction.
-		if l.flatMgr != nil && l.flatMgr.Ready() {
-			processedImg = l.flatMgr.Apply(processedImg)
-		}
-
-		// Histogram stretch — night only; daytime images have full dynamic range
-		// and stretching washes out colour and blows out highlights.
-		if l.cfg.Output.Stretch.Enabled && l.mode == ModeNight {
-			sc := l.cfg.Output.Stretch
-			processedImg = imgutil.Stretch(processedImg, sc.Mode, sc.BlackPoint, sc.WhitePoint, sc.AutoBlackPercentile, sc.AutoWhitePercentile)
-		}
-
-		// Sky metrics — night frames only: cloud coverage, green ratio,
-		// star statistics, and aurora detection.
-		if l.mode == ModeNight {
-			m := cloud.Estimate(processedImg, result.Meta.Timestamp)
-
-			// Star detection is heavier than the sampled stats; run it on
-			// every starDetectEvery-th frame and carry the result forward.
-			if l.frameCount%starDetectEvery == 0 {
-				l.lastStars = stars.Detect(processedImg)
-			}
-			m.StarCount = l.lastStars.Count
-			m.StarFWHM = l.lastStars.MeanFWHM
-			m.File = frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
-
-			l.cloudMetrics = append(l.cloudMetrics, m)
-
-			if l.auroraDet != nil && l.auroraDet.Observe(m.GreenRatio, m.Coverage) {
-				l.sendAuroraAlert(ctx, m)
-			}
-		}
-
-		// Apply overlay.
-		overlayCfg := imgutil.DefaultOverlayConfig()
-		overlayCfg.Enabled = l.cfg.Output.Overlay
-		overlayCfg.FontSize = l.cfg.Output.OverlayFontSize
-		processedImg = imgutil.ApplyOverlay(processedImg, result.Meta, overlayCfg)
-
-		// Save image. Night images all go into the folder named after the
-		// night's start date so midnight crossings don't split the dataset.
-		dateLabel := l.now().Format("2006-01-02")
-		if l.mode == ModeNight {
-			if l.nightSessionDir == "" {
-				l.nightSessionDir = dateLabel
-			}
-			dateLabel = l.nightSessionDir
-		}
-		outputDir := filepath.Join(l.cfg.Output.Directory, dateLabel)
-		if err := os.MkdirAll(outputDir, 0755); err != nil {
-			l.logger.Error("create output dir", "error", err)
-			continue
-		}
-
-		filename := frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
-		outputPath := filepath.Join(outputDir, filename)
-
-		data, err := imgutil.EncodeImage(processedImg, modeCfg.ImageType, modeCfg.Quality)
-		if err != nil {
-			l.logger.Error("encode image", "error", err)
-			continue
-		}
-
-		if err := writeFileAtomic(outputPath, data); err != nil {
-			l.logger.Error("save image", "error", err)
-			continue
-		}
-
-		l.logger.Info("saved",
-			"path", outputPath,
-			"size_kb", len(data)/1024,
-			"frame", l.frameCount,
-		)
-
-		// Save DNG alongside the main image when raw capture is enabled.
-		if len(result.DNGData) > 0 {
-			stem := outputPath[:len(outputPath)-len(filepath.Ext(outputPath))]
-			dngPath := stem + ".dng"
-			if err := writeFileAtomic(dngPath, result.DNGData); err != nil {
-				l.logger.Error("save DNG", "error", err)
-			} else {
-				l.logger.Debug("saved DNG", "path", dngPath, "size_kb", len(result.DNGData)/1024)
-			}
-		}
-
-		// Generate thumbnail from the already-decoded image so the web UI
-		// serves pre-built thumbnails without re-decoding from disk.
-		select {
-		case l.thumbSem <- struct{}{}:
-			go func(img image.Image, path string) {
-				defer func() { <-l.thumbSem }()
-				if err := imgutil.CacheThumb(img, path); err != nil {
-					l.logger.Debug("thumbnail generation failed", "error", err)
-				}
-			}(processedImg, outputPath)
-		default:
-			l.logger.Debug("thumbnail workers busy, skipping", "path", outputPath)
-		}
-
-		// Notify upload handler.
-		if l.OnImageSaved != nil {
-			l.OnImageSaved(outputPath, result.Meta)
-		}
-
-		// Iterative timelapse: encode a segment every SegmentFrames night frames.
-		if l.mode == ModeNight && l.cfg.Output.Timelapse.Enabled {
-			if sf := l.cfg.Output.Timelapse.SegmentFrames; sf > 0 {
-				l.nightFrameCount++
-				if l.nightFrameCount%sf == 0 {
-					segIdx := (l.nightFrameCount / sf) - 1
-					dir := filepath.Join(l.cfg.Output.Directory, l.nightSessionDir)
-					tlCfg := timelapse.FromConfig(l.cfg.Output.Timelapse)
-					segWg := l.segmentWg
-					segWg.Add(1)
-					go func(idx int) {
-						defer segWg.Done()
-						if _, err := timelapse.GenerateSegment(ctx, dir, idx, sf, tlCfg, l.logger); err != nil {
-							l.logger.Error("timelapse segment failed", "segment", idx, "error", err)
-						}
-					}(segIdx)
-				}
-			}
-		}
-
-		// Auto-exposure adjustment using the metered zone mean.
-		if modeCfg.AutoExposure {
-			l.exposureCtrl.Adjust(meteredMean)
-		}
-
-		// Write live metrics for the web server's /api/metrics endpoint.
-		cloudCov, greenRatio := 0.0, 0.0
-		if len(l.cloudMetrics) > 0 {
-			last := l.cloudMetrics[len(l.cloudMetrics)-1]
-			cloudCov, greenRatio = last.Coverage, last.GreenRatio
-		}
-		now := l.now()
-		snap := metrics.Snapshot{
-			Mode:           l.mode.String(),
-			ExposureNs:     l.exposureCtrl.Exposure.Nanoseconds(),
-			Exposure:       imgutil.FormatExposure(l.exposureCtrl.Exposure),
-			Gain:           l.exposureCtrl.Gain,
-			FrameCount:     l.frameCount,
-			MeanBrightness: meteredMean,
-			CloudCoverage:  cloudCov,
-			GreenRatio:     greenRatio,
-			StarCount:      l.lastStars.Count,
-			StarFWHM:       l.lastStars.MeanFWHM,
-			MoonAltitude:   astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude,
-			MoonIllum:      astro.MoonPhase(now),
-			SensorTempC:    result.Meta.Temperature,
-			LastCapture:    result.Meta.Timestamp,
-		}
-		if err := metrics.Write(l.cfg.Output.MetricsDirectory(), snap); err != nil {
-			l.logger.Debug("metrics write failed", "error", err)
-		}
-
-		// Mid-session disk guard: end-of-night cleanup alone lets a long
-		// night fill the card mid-session, and a full filesystem takes the
-		// whole system down with it. Reuses the space-based cleanup with the
-		// active night session protected.
-		if l.cfg.Output.MinFreeGB > 0 && l.frameCount%diskCheckInterval == 0 {
-			if free, err := DiskFreeGB(l.cfg.Output.Directory); err == nil && free < l.cfg.Output.MinFreeGB {
-				l.logger.Warn("disk space low mid-session, removing oldest captures",
-					"free_gb", free, "min_free_gb", l.cfg.Output.MinFreeGB)
-				if err := CleanForSpace(l.cfg.Output.Directory, l.cfg.Output.MinFreeGB, l.nightSessionDir, l.logger); err != nil {
-					l.logger.Error("mid-session cleanup failed", "error", err)
-				}
-			}
 		}
 
 		// Delay between captures.
@@ -565,6 +213,409 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+// frameOutcome tells Run whether a processed frame finished normally.
+type frameOutcome int
+
+const (
+	// frameComplete: the frame was fully processed and saved; the caller
+	// honours the configured inter-frame delay.
+	frameComplete frameOutcome = iota
+	// frameAborted: the frame was skipped (post-transition warmup) or failed
+	// part-way through. The caller retries immediately without the delay,
+	// matching the original loop's `continue`.
+	frameAborted
+)
+
+// processFrame runs a captured frame through the pipeline: calibration,
+// metering, sky metrics, overlay, save, and the per-frame side effects
+// (thumbnail, upload hook, timelapse segmentation, metrics snapshot, disk
+// guard).
+func (l *Loop) processFrame(ctx context.Context, result *camera.CaptureResult, modeCfg config.ModeConfig) frameOutcome {
+	processedImg, meteredMean, rawCalibrated := l.meterFrame(result, modeCfg)
+	l.applyMoonTargetBoost(modeCfg)
+
+	// Skip frames after mode transition.
+	if l.skipRemaining > 0 {
+		l.skipRemaining--
+		l.logger.Debug("skipping frame", "remaining", l.skipRemaining)
+		if modeCfg.AutoExposure {
+			l.exposureCtrl.Adjust(meteredMean)
+		}
+		return frameAborted
+	}
+
+	processedImg = l.applyCalibration(processedImg, result, modeCfg, rawCalibrated)
+
+	l.recordSkyMetrics(ctx, processedImg, result, modeCfg)
+
+	// Apply overlay.
+	overlayCfg := imgutil.DefaultOverlayConfig()
+	overlayCfg.Enabled = l.cfg.Output.Overlay
+	overlayCfg.FontSize = l.cfg.Output.OverlayFontSize
+	processedImg = imgutil.ApplyOverlay(processedImg, result.Meta, overlayCfg)
+
+	outputPath, ok := l.saveFrame(processedImg, result, modeCfg)
+	if !ok {
+		return frameAborted
+	}
+
+	l.cacheThumbnail(processedImg, outputPath)
+
+	// Notify upload handler.
+	if l.OnImageSaved != nil {
+		l.OnImageSaved(outputPath, result.Meta)
+	}
+
+	l.maybeEncodeSegment(ctx)
+
+	// Auto-exposure adjustment using the metered zone mean.
+	if modeCfg.AutoExposure {
+		l.exposureCtrl.Adjust(meteredMean)
+	}
+
+	l.writeMetricsSnapshot(result, meteredMean)
+	l.guardDiskSpace()
+
+	return frameComplete
+}
+
+// meterFrame produces the image the rest of the pipeline works on and the mean
+// brightness auto-exposure steers by.
+//
+// The experimental raw pipeline is opt-in via output.raw_calibration; the flag
+// guard keeps every raw code path inert when disabled. On success both the
+// image and the metered mean come from the linear raw data; any failure falls
+// back to the standard processed image. The returned bool reports whether raw
+// calibration ran, because it also subtracts the master dark — the 8-bit dark
+// subtraction downstream must not then run a second time.
+func (l *Loop) meterFrame(result *camera.CaptureResult, modeCfg config.ModeConfig) (image.Image, float64, bool) {
+	if l.cfg.Output.RawCalibration && len(result.DNGData) > 0 {
+		img, mean, err := l.calibrateRaw(result, modeCfg)
+		if err == nil {
+			l.rawWarned = false
+			return img, mean, true
+		}
+		if !l.rawWarned {
+			l.logger.Warn("raw calibration failed; using standard processed image", "error", err)
+			l.rawWarned = true
+		}
+	}
+	// Metered brightness for auto-exposure from the processed image.
+	return result.Image, ZoneMean(result.Image, modeCfg.MeteringZone), false
+}
+
+// applyMoonTargetBoost raises the auto-exposure target while the moon is up,
+// proportionally to its illuminated fraction, so the controller stops fighting
+// moonlight with maximum gain.
+func (l *Loop) applyMoonTargetBoost(modeCfg config.ModeConfig) {
+	if !modeCfg.AutoExposure || modeCfg.MoonTargetBoost <= 0 {
+		return
+	}
+	target := modeCfg.TargetBrightness
+	now := l.now()
+	if astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude > 0 {
+		target *= 1 + modeCfg.MoonTargetBoost*astro.MoonPhase(now)
+	}
+	l.exposureCtrl.TargetBrightness = target
+}
+
+// applyCalibration runs the 8-bit correction chain: dark subtraction, flat
+// division, then the night-only histogram stretch.
+func (l *Loop) applyCalibration(img image.Image, result *camera.CaptureResult, modeCfg config.ModeConfig, rawCalibrated bool) image.Image {
+	// Select the dark matching this frame's actual exposure/gain (which drift
+	// under auto-exposure), not the mode's configured base. Skipped when the
+	// raw pipeline already subtracted a linear master dark.
+	if !rawCalibrated && l.darkMgr != nil {
+		dark := l.darkMgr.SelectDark(DarkFrameKey{
+			Exposure: result.Meta.Exposure,
+			Gain:     result.Meta.Gain,
+			Binning:  modeCfg.Binning,
+		})
+		if dark != nil {
+			img = SubtractDark(img, dark)
+		}
+	}
+
+	// Flat field correction.
+	if l.flatMgr != nil && l.flatMgr.Ready() {
+		img = l.flatMgr.Apply(img)
+	}
+
+	// Histogram stretch — night only; daytime images have full dynamic range
+	// and stretching washes out colour and blows out highlights.
+	if l.cfg.Output.Stretch.Enabled && l.mode == ModeNight {
+		sc := l.cfg.Output.Stretch
+		img = imgutil.Stretch(img, sc.Mode, sc.BlackPoint, sc.WhitePoint, sc.AutoBlackPercentile, sc.AutoWhitePercentile)
+	}
+
+	return img
+}
+
+// cacheThumbnail writes a thumbnail from the already-decoded image so the web
+// UI serves pre-built thumbnails without re-decoding from disk. Bounded by
+// thumbSem; when the workers are busy the thumbnail is skipped and the web
+// server generates it on demand instead.
+func (l *Loop) cacheThumbnail(img image.Image, outputPath string) {
+	select {
+	case l.thumbSem <- struct{}{}:
+		go func() {
+			defer func() { <-l.thumbSem }()
+			if err := imgutil.CacheThumb(img, outputPath); err != nil {
+				l.logger.Debug("thumbnail generation failed", "error", err)
+			}
+		}()
+	default:
+		l.logger.Debug("thumbnail workers busy, skipping", "path", outputPath)
+	}
+}
+
+// maybeEncodeSegment advances the iterative-timelapse counter and kicks off a
+// segment encode every SegmentFrames night frames, so the end-of-night job
+// only has to concatenate.
+func (l *Loop) maybeEncodeSegment(ctx context.Context) {
+	if l.mode != ModeNight || !l.cfg.Output.Timelapse.Enabled {
+		return
+	}
+	sf := l.cfg.Output.Timelapse.SegmentFrames
+	if sf <= 0 {
+		return
+	}
+
+	l.night.frameCount++
+	if l.night.frameCount%sf != 0 {
+		return
+	}
+
+	segIdx := (l.night.frameCount / sf) - 1
+	dir := l.night.path(l.cfg.Output.Directory)
+	tlCfg := timelapse.FromConfig(l.cfg.Output.Timelapse)
+	segWg := &l.night.segmentWg
+	segWg.Add(1)
+	go func() {
+		defer segWg.Done()
+		if _, err := timelapse.GenerateSegment(ctx, dir, segIdx, sf, tlCfg, l.logger); err != nil {
+			l.logger.Error("timelapse segment failed", "segment", segIdx, "error", err)
+		}
+	}()
+}
+
+// recordSkyMetrics computes the per-frame sky statistics — cloud coverage,
+// green ratio, star count and FWHM — and feeds the aurora detector. Night
+// frames only; daytime frames carry no sky signal worth measuring.
+func (l *Loop) recordSkyMetrics(ctx context.Context, img image.Image, result *camera.CaptureResult, modeCfg config.ModeConfig) {
+	if l.mode != ModeNight {
+		return
+	}
+
+	m := cloud.Estimate(img, result.Meta.Timestamp)
+
+	// Star detection is heavier than the sampled stats; run it on every
+	// starDetectEvery-th frame and carry the result forward.
+	if l.frameCount%starDetectEvery == 0 {
+		l.lastStars = stars.Detect(img)
+	}
+	m.StarCount = l.lastStars.Count
+	m.StarFWHM = l.lastStars.MeanFWHM
+	m.File = frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
+
+	l.night.metrics = append(l.night.metrics, m)
+
+	if l.auroraDet != nil && l.auroraDet.Observe(m.GreenRatio, m.Coverage) {
+		l.sendAuroraAlert(ctx, m)
+	}
+}
+
+// saveFrame encodes and atomically writes the frame, plus its DNG sidecar when
+// raw capture is on. It returns the written path, and false if the frame could
+// not be saved.
+func (l *Loop) saveFrame(img image.Image, result *camera.CaptureResult, modeCfg config.ModeConfig) (string, bool) {
+	// Night images all go into the folder named after the night's start date
+	// so midnight crossings don't split the dataset.
+	dateLabel := l.now().Format("2006-01-02")
+	if l.mode == ModeNight {
+		dateLabel = l.night.dir
+	}
+	outputDir := filepath.Join(l.cfg.Output.Directory, dateLabel)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		l.logger.Error("create output dir", "error", err)
+		return "", false
+	}
+
+	filename := frameFilename(l.cfg.Output.FilenamePrefix, result.Meta.Timestamp, modeCfg.ImageType)
+	outputPath := filepath.Join(outputDir, filename)
+
+	data, err := imgutil.EncodeImage(img, modeCfg.ImageType, modeCfg.Quality)
+	if err != nil {
+		l.logger.Error("encode image", "error", err)
+		return "", false
+	}
+
+	if err := writeFileAtomic(outputPath, data); err != nil {
+		l.logger.Error("save image", "error", err)
+		return "", false
+	}
+
+	l.logger.Info("saved",
+		"path", outputPath,
+		"size_kb", len(data)/1024,
+		"frame", l.frameCount,
+	)
+
+	// Save DNG alongside the main image when raw capture is enabled.
+	if len(result.DNGData) > 0 {
+		stem := outputPath[:len(outputPath)-len(filepath.Ext(outputPath))]
+		dngPath := stem + ".dng"
+		if err := writeFileAtomic(dngPath, result.DNGData); err != nil {
+			l.logger.Error("save DNG", "error", err)
+		} else {
+			l.logger.Debug("saved DNG", "path", dngPath, "size_kb", len(result.DNGData)/1024)
+		}
+	}
+
+	return outputPath, true
+}
+
+// writeMetricsSnapshot publishes the live state the web UI's /api/metrics
+// endpoint reads. Failures are non-fatal — the capture is already on disk.
+func (l *Loop) writeMetricsSnapshot(result *camera.CaptureResult, meteredMean float64) {
+	cloudCov, greenRatio := 0.0, 0.0
+	if last, ok := l.night.lastMetric(); ok {
+		cloudCov, greenRatio = last.Coverage, last.GreenRatio
+	}
+	now := l.now()
+	snap := metrics.Snapshot{
+		Mode:           l.mode.String(),
+		ExposureNs:     l.exposureCtrl.Exposure.Nanoseconds(),
+		Exposure:       imgutil.FormatExposure(l.exposureCtrl.Exposure),
+		Gain:           l.exposureCtrl.Gain,
+		FrameCount:     l.frameCount,
+		MeanBrightness: meteredMean,
+		CloudCoverage:  cloudCov,
+		GreenRatio:     greenRatio,
+		StarCount:      l.lastStars.Count,
+		StarFWHM:       l.lastStars.MeanFWHM,
+		MoonAltitude:   astro.MoonPosition(now, l.cfg.Location.Latitude, l.cfg.Location.Longitude).Altitude,
+		MoonIllum:      astro.MoonPhase(now),
+		SensorTempC:    result.Meta.Temperature,
+		LastCapture:    result.Meta.Timestamp,
+	}
+	if err := metrics.Write(l.cfg.Output.MetricsDirectory(), snap); err != nil {
+		l.logger.Debug("metrics write failed", "error", err)
+	}
+}
+
+// guardDiskSpace reclaims space mid-session. End-of-night cleanup alone lets a
+// long night fill the card while it is still running, and a full filesystem
+// takes the whole system down with it. Reuses the space-based cleanup with the
+// active night session protected.
+func (l *Loop) guardDiskSpace() {
+	if l.cfg.Output.MinFreeGB <= 0 || l.frameCount%diskCheckInterval != 0 {
+		return
+	}
+	free, err := DiskFreeGB(l.cfg.Output.Directory)
+	if err != nil || free >= l.cfg.Output.MinFreeGB {
+		return
+	}
+	l.logger.Warn("disk space low mid-session, removing oldest captures",
+		"free_gb", free, "min_free_gb", l.cfg.Output.MinFreeGB)
+	if err := CleanForSpace(l.cfg.Output.Directory, l.cfg.Output.MinFreeGB, l.activeNightDir(), l.logger); err != nil {
+		l.logger.Error("mid-session cleanup failed", "error", err)
+	}
+}
+
+// applyModeTransition switches day/night mode when the sun has crossed the
+// configured angle, handing a finished night off to background processing.
+func (l *Loop) applyModeTransition(ctx context.Context) {
+	newMode := l.currentMode()
+	if newMode == l.mode {
+		return
+	}
+	l.logger.Info("mode transition", "from", l.mode, "to", newMode)
+
+	// End-of-night processing runs in the background so day capture starts
+	// immediately instead of stalling behind timelapse encoding (encodes are
+	// niced, so they yield CPU to capture). The goroutine owns the finished
+	// session; clearing l.night means the next dusk starts a fresh one, so
+	// nothing the end-of-night pipeline reads can still be mutated here.
+	if l.mode == ModeNight && newMode == ModeDay {
+		if finished := l.night; finished != nil {
+			l.nightEndWg.Add(1)
+			go func() {
+				defer l.nightEndWg.Done()
+				l.finishNight(ctx, finished)
+			}()
+		}
+		l.night = nil
+	}
+
+	l.mode = newMode
+	l.initMode()
+}
+
+// captureFrame takes one exposure with the current mode's settings.
+func (l *Loop) captureFrame(ctx context.Context, modeCfg config.ModeConfig) (*camera.CaptureResult, error) {
+	settings := camera.CaptureSettings{
+		Exposure: l.exposureCtrl.Exposure,
+		Gain:     l.exposureCtrl.Gain,
+		Binning:  modeCfg.Binning,
+		WBRed:    modeCfg.WBRed,
+		WBBlue:   modeCfg.WBBlue,
+		AWB:      modeCfg.AWB,
+		Flip:     l.cfg.Camera.Flip,
+		Format:   camera.FormatRGB24,
+		Denoise:  modeCfg.Denoise,
+		SaveRaw:  modeCfg.SaveRaw,
+	}
+
+	// Apply cooler settings if applicable.
+	if modeCfg.CoolerEnabled {
+		l.cam.SetCooler(camera.CoolerSettings{
+			Enabled:    true,
+			TargetTemp: modeCfg.CoolerTarget,
+		})
+	}
+
+	// Grace period covers rpicam-still startup (3-10s on a Pi), the shutter
+	// open time, and image encoding before the context fires.
+	captureCtx, cancel := context.WithTimeout(ctx, settings.Exposure+120*time.Second)
+	defer cancel()
+	return l.cam.Capture(captureCtx, settings)
+}
+
+// backOffAfterFailure records a capture failure, cycles the camera when the
+// streak suggests a wedged device, and waits out the backoff. It returns a
+// non-nil error only when the context ended during the wait, which is the
+// loop's signal to stop.
+func (l *Loop) backOffAfterFailure(ctx context.Context, err error) error {
+	l.failureStreak++
+	backoff := failureBackoff(l.failureStreak)
+	l.logger.Error("capture failed",
+		"error", err,
+		"consecutive_failures", l.failureStreak,
+		"retry_in", backoff,
+	)
+
+	// A persistent failure streak usually means a wedged device (USB stall,
+	// crashed pipeline) that retrying alone won't fix — cycle the camera
+	// connection.
+	if l.failureStreak%5 == 0 {
+		l.logger.Warn("reinitializing camera after repeated capture failures")
+		if cerr := l.cam.Close(); cerr != nil {
+			l.logger.Error("camera close failed", "error", cerr)
+		}
+		if oerr := l.cam.Open(); oerr != nil {
+			l.logger.Error("camera reopen failed", "error", oerr)
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(backoff):
+	}
+	return nil
 }
 
 // currentMode determines whether it's day or night based on sun position.
@@ -586,7 +637,7 @@ func (l *Loop) modeConfig() config.ModeConfig {
 // initMode initializes state for a new mode.
 func (l *Loop) initMode() {
 	if l.mode == ModeNight {
-		if l.nightSessionDir == "" {
+		if l.night == nil {
 			// Label the session by the date of the most recent dusk, not the
 			// wall clock: a restart after midnight would otherwise start a
 			// second directory for the same night, splitting the timelapse.
@@ -595,17 +646,17 @@ func (l *Loop) initMode() {
 				l.cfg.Location.Latitude, l.cfg.Location.Longitude, l.cfg.Location.Angle); ok {
 				sessionTime = dusk
 			}
-			l.nightSessionDir = sessionTime.Format("2006-01-02")
-			// Fresh group per session — the previous night's group may still
-			// be drained by its end-of-night goroutine.
-			l.segmentWg = &sync.WaitGroup{}
+			// A fresh session also means a fresh segment WaitGroup: the
+			// previous night's may still be draining in its end-of-night
+			// goroutine.
+			l.night = newNightSession(sessionTime.Format("2006-01-02"))
 			// Fresh sky-metric state for the new night.
 			if l.auroraDet != nil {
 				l.auroraDet.Reset()
 			}
 			l.lastStars = stars.Result{}
 		}
-		l.nightFrameCount = 0
+		l.night.frameCount = 0
 	}
 
 	modeCfg := l.modeConfig()
@@ -684,192 +735,6 @@ func frameFilename(prefix string, ts time.Time, imageType string) string {
 	return fmt.Sprintf("%s-%s.%s", prefix, ts.Format("20060102150405"), imageType)
 }
 
-// highlightCount is how many top frames the nightly manifest records.
-const highlightCount = 5
-
-// Highlight is one entry in the nightly best-frames manifest.
-type Highlight struct {
-	File  string  `json:"file"`
-	Time  string  `json:"time"`
-	Stars int     `json:"stars"`
-	Cloud float64 `json:"cloud"`
-}
-
-// WriteHighlights ranks the night's frames by star count weighted by clear
-// sky, copies the top picks to protected highlight-N-<file> names that
-// survive raw pruning and WebP conversion, and writes the manifest to
-// highlights-<date>.json in nightDir.
-//
-// Runs ahead of the end-of-night synthesis suite: it needs nothing that
-// suite produces, and going first keeps the night's best frames out of the
-// blast radius of a step that OOMs or times out. Frames already converted by
-// an earlier pass resolve via their .webp twin; frames that vanished
-// entirely are skipped.
-//
-// Safe to re-run: `nightsky process` calls it with metrics read back from the
-// night's CSV, which regenerates highlights for a night whose live run was
-// interrupted.
-func WriteHighlights(nightDir string, ms []cloud.Metric, logger *slog.Logger) {
-	type scored struct {
-		m     cloud.Metric
-		score float64
-	}
-	var candidates []scored
-	for _, m := range ms {
-		if m.StarCount == 0 {
-			continue
-		}
-		candidates = append(candidates, scored{m, float64(m.StarCount) * (1 - m.Coverage)})
-	}
-	if len(candidates) == 0 {
-		return
-	}
-	slices.SortFunc(candidates, func(a, b scored) int {
-		switch {
-		case a.score > b.score:
-			return -1
-		case a.score < b.score:
-			return 1
-		}
-		return 0
-	})
-
-	// Stale protected copies from a previous run of this night are replaced.
-	removeOldHighlightCopies(nightDir)
-
-	var picks []Highlight
-	for _, c := range candidates {
-		if len(picks) >= highlightCount {
-			break
-		}
-		file := resolveFrameFile(nightDir, c.m)
-		if file == "" {
-			continue
-		}
-
-		// Copy to a protected name the raw pruner keeps, so the night's best
-		// frames outlive prune_raw_after_days. On copy failure the manifest
-		// references the original (works until pruned).
-		protected := fmt.Sprintf("highlight-%d-%s", len(picks)+1, file)
-		if data, err := os.ReadFile(filepath.Join(nightDir, file)); err == nil {
-			if err := writeFileAtomic(filepath.Join(nightDir, protected), data); err == nil {
-				file = protected
-			} else {
-				logger.Warn("highlight copy failed", "file", protected, "error", err)
-			}
-		}
-
-		picks = append(picks, Highlight{
-			File:  file,
-			Time:  c.m.Timestamp.Format("15:04:05"),
-			Stars: c.m.StarCount,
-			Cloud: c.m.Coverage,
-		})
-	}
-	if len(picks) == 0 {
-		return
-	}
-
-	date := filepath.Base(nightDir)
-	data, err := json.MarshalIndent(map[string]any{"date": date, "frames": picks}, "", "  ")
-	if err != nil {
-		return
-	}
-	path := filepath.Join(nightDir, "highlights-"+date+".json")
-	if err := writeFileAtomic(path, data); err != nil {
-		logger.Error("highlights write failed", "error", err)
-		return
-	}
-	logger.Info("night highlights written", "path", path, "frames", len(picks))
-}
-
-// frameExts are the saved frame formats a highlight may point at; .dng is
-// excluded because the web UI cannot display it.
-var frameExts = []string{".png", ".jpg", ".jpeg", ".webp"}
-
-// resolveFrameFile returns the on-disk filename backing a metric's frame, or
-// "" when the frame is gone. It prefers the recorded name, falls back to the
-// .webp twin left behind by conversion, and finally matches on the timestamp
-// embedded in the filename — the last case backfills nights whose CSV predates
-// the file column, where the metric carries no filename at all.
-func resolveFrameFile(nightDir string, m cloud.Metric) string {
-	if m.File != "" {
-		if _, err := os.Stat(filepath.Join(nightDir, m.File)); err == nil {
-			return m.File
-		}
-		webp := strings.TrimSuffix(m.File, filepath.Ext(m.File)) + ".webp"
-		if _, err := os.Stat(filepath.Join(nightDir, webp)); err == nil {
-			return webp
-		}
-		return ""
-	}
-
-	matches, err := filepath.Glob(filepath.Join(nightDir, "*-"+m.Timestamp.Format("20060102150405")+".*"))
-	if err != nil {
-		return ""
-	}
-	slices.Sort(matches)
-	for _, p := range matches {
-		name := filepath.Base(p)
-		// Never pick a previous run's protected copy: doing so would nest
-		// highlight- prefixes on every re-run.
-		if highlightCopyRe.MatchString(strings.ToLower(name)) {
-			continue
-		}
-		if slices.Contains(frameExts, strings.ToLower(filepath.Ext(name))) {
-			return name
-		}
-	}
-	return ""
-}
-
-// highlightCopyRe matches protected highlight frame copies (not the
-// highlights-<date>.json manifest).
-var highlightCopyRe = regexp.MustCompile(`^highlight-\d+-`)
-
-// removeOldHighlightCopies deletes protected copies from a previous
-// highlights run so re-processing a night can't accumulate stale picks.
-func removeOldHighlightCopies(nightDir string) {
-	entries, err := os.ReadDir(nightDir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() && highlightCopyRe.MatchString(strings.ToLower(e.Name())) {
-			os.Remove(filepath.Join(nightDir, e.Name()))
-		}
-	}
-}
-
-// nightSummaryMessage composes the dawn notification from the night's sky
-// metrics.
-func nightSummaryMessage(date string, ms []cloud.Metric, auroraEvents int, baseURL string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Night %s: %d frames", date, len(ms))
-	if len(ms) > 1 {
-		span := ms[len(ms)-1].Timestamp.Sub(ms[0].Timestamp).Round(time.Minute)
-		fmt.Fprintf(&b, " over %s", span)
-	}
-	fmt.Fprintf(&b, ". %s.", cloud.SummaryLine(ms))
-
-	peakStars := 0
-	for _, m := range ms {
-		if m.StarCount > peakStars {
-			peakStars = m.StarCount
-		}
-	}
-	if peakStars > 0 {
-		fmt.Fprintf(&b, " Peak stars: %d.", peakStars)
-	}
-	if auroraEvents > 0 {
-		fmt.Fprintf(&b, " Aurora alerts: %d.", auroraEvents)
-	}
-	if baseURL != "" {
-		fmt.Fprintf(&b, " %s", strings.TrimRight(baseURL, "/"))
-	}
-	return b.String()
-}
-
 // sendAuroraAlert delivers an aurora notification in the background.
 func (l *Loop) sendAuroraAlert(ctx context.Context, m cloud.Metric) {
 	msg := fmt.Sprintf("Possible aurora at %s — green ratio %.2f, cloud %.0f%%, %d stars visible.",
@@ -877,7 +742,7 @@ func (l *Loop) sendAuroraAlert(ctx context.Context, m cloud.Metric) {
 	if base := l.cfg.Alerts.BaseURL; base != "" {
 		msg += " Live view: " + strings.TrimRight(base, "/") + "/latest"
 	}
-	l.auroraEvents++
+	l.night.auroraEvents++
 	l.logger.Info("aurora alert triggered", "green_ratio", m.GreenRatio, "cloud", m.Coverage)
 	go func() {
 		if err := l.Notifier.Send(ctx, "Possible aurora", msg); err != nil {
