@@ -89,5 +89,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /out/nightsky /usr/local/bin/nightsky
 COPY configs/nightsky.example.yaml /etc/nightsky/nightsky.yaml
 
+# Non-root runtime (see Dockerfile for the bind-mount ownership note). ZWO USB
+# cameras additionally need the container user in a group with access to
+# /dev/bus/usb, or a udev rule on the host.
+RUN groupadd --gid 10001 nightsky \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin nightsky \
+    && mkdir -p /output /darks \
+    && chown nightsky:nightsky /output /darks
+USER 10001:10001
+
 ENTRYPOINT ["nightsky"]
 CMD ["capture", "--config", "/etc/nightsky/nightsky.yaml"]

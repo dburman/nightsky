@@ -7,3 +7,9 @@ darks/
 *.dng
 nightsky.yaml
 .env
+
+# macOS
+.DS_Store
+
+# Live metrics file, written next to captures
+.metrics.json

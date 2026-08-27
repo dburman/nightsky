@@ -2,13 +2,17 @@ package web
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
+	_ "golang.org/x/image/webp"
 	"image"
 	"image/jpeg"
 	_ "image/png"
-	_ "golang.org/x/image/webp"
+	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,21 +77,110 @@ func (s *Server) routes() *http.ServeMux {
 	return mux
 }
 
-// ListenAndServe registers routes and starts the HTTP server. The server sets
-// explicit timeouts so dead or dawdling connections (flaky WiFi, Slowloris)
-// can't accumulate file descriptors over weeks of uptime. WriteTimeout stays
-// generous because timelapse MP4s are streamed over slow links.
-func (s *Server) ListenAndServe() error {
+// contentSecurityPolicy is written for the single embedded page: everything it
+// needs is same-origin, apart from the inline <style> and <script> it is built
+// from and the data: URI favicon. 'unsafe-inline' is therefore unavoidable
+// without hashing the blocks, but the rest of the policy still does real work
+// — it blocks any external load, plugin, or <base> rewrite that an injected
+// filename could otherwise reach for, and frame-ancestors 'none' keeps the
+// camera's UI out of someone else's frame.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"media-src 'self'; " +
+	"connect-src 'self'; " +
+	"font-src 'self'; " +
+	"object-src 'none'; " +
+	"base-uri 'none'; " +
+	"form-action 'none'; " +
+	"frame-ancestors 'none'"
+
+// securityHeaders sets the response headers that apply to every route. nosniff
+// matters most on /output, which serves file bytes under a Content-Type
+// derived from a filename the server did not choose.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handler returns the fully wrapped HTTP handler.
+func (s *Server) handler() http.Handler {
+	return securityHeaders(s.routes())
+}
+
+// ListenAndServe starts the HTTP server and blocks until ctx is cancelled, at
+// which point in-flight responses are given a grace period to finish — a
+// timelapse download shouldn't be severed by a restart.
+//
+// The server sets explicit timeouts so dead or dawdling connections (flaky
+// WiFi, Slowloris) can't accumulate file descriptors over weeks of uptime.
+// WriteTimeout stays generous because timelapse MP4s are streamed over slow
+// links.
+func (s *Server) ListenAndServe(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              s.addr,
-		Handler:           s.routes(),
+		Handler:           s.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      15 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
+
 	s.logger.Info("web UI started", "url", "http://localhost"+s.addr)
-	return srv.ListenAndServe()
+	if !isLoopback(s.addr) {
+		// The UI has no authentication and /api/config reports the camera's
+		// coordinates, so binding beyond loopback is a deliberate choice the
+		// operator should see in the log.
+		s.logger.Warn("web UI is reachable beyond localhost and has no authentication; "+
+			"put it behind a reverse proxy or restrict it at the firewall",
+			"addr", s.addr)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		s.logger.Info("shutting down web UI")
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return err
+		}
+		return <-errCh
+	}
+}
+
+// isLoopback reports whether a listen address binds only the loopback
+// interface. An empty or wildcard host ("" or ":8080") binds everything.
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -137,12 +230,20 @@ type captureEntry struct {
 }
 
 func (s *Server) handleCaptures(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(s.cfg.Output.Directory)
+	root, err := s.openOutputRoot()
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.writeJSON(w, []captureEntry{})
 			return
 		}
+		http.Error(w, "failed to read output directory", http.StatusInternalServerError)
+		return
+	}
+	defer root.Close()
+
+	fsys := root.FS()
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
 		http.Error(w, "failed to read output directory", http.StatusInternalServerError)
 		return
 	}
@@ -158,8 +259,7 @@ func (s *Server) handleCaptures(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		dirPath := filepath.Join(s.cfg.Output.Directory, name)
-		files, err := os.ReadDir(dirPath)
+		files, err := fs.ReadDir(fsys, name)
 		if err != nil {
 			continue
 		}
@@ -186,12 +286,11 @@ func (s *Server) handleCaptures(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Sort newest-first.
+	// Sort newest-first. The comparator is a real three-way compare (0 for
+	// equal): slices.SortFunc requires a strict weak ordering, and a
+	// comparator that never returns 0 does not provide one.
 	slices.SortFunc(captures, func(a, b captureEntry) int {
-		if a.Date > b.Date {
-			return -1
-		}
-		return 1
+		return strings.Compare(b.Date, a.Date)
 	})
 
 	s.writeJSON(w, captures)
@@ -227,8 +326,8 @@ type dateImagesResponse struct {
 
 // loadHighlights reads the night's highlights manifest, returning nil when
 // absent or unreadable.
-func loadHighlights(dirPath, date string) []highlightEntry {
-	data, err := os.ReadFile(filepath.Join(dirPath, "highlights-"+date+".json"))
+func loadHighlights(root *os.Root, date string) []highlightEntry {
+	data, err := root.ReadFile(filepath.Join(date, "highlights-"+date+".json"))
 	if err != nil {
 		return nil
 	}
@@ -259,12 +358,22 @@ func loadHighlights(dirPath, date string) []highlightEntry {
 }
 
 func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
+	// The date segment is attacker-controlled and reaches the filesystem, so
+	// it is resolved through the output root rather than joined onto it: ".."
+	// and an absolute path both fail here instead of listing another
+	// directory's contents.
 	date := r.PathValue("date")
 
-	dirPath := filepath.Join(s.cfg.Output.Directory, date)
-	files, err := os.ReadDir(dirPath)
+	root, err := s.openOutputRoot()
 	if err != nil {
-		if os.IsNotExist(err) {
+		http.Error(w, "date not found", http.StatusNotFound)
+		return
+	}
+	defer root.Close()
+
+	files, err := fs.ReadDir(root.FS(), date)
+	if err != nil {
+		if os.IsNotExist(err) || errors.Is(err, fs.ErrInvalid) {
 			http.Error(w, "date not found", http.StatusNotFound)
 			return
 		}
@@ -323,16 +432,13 @@ func (s *Server) handleDateImages(w http.ResponseWriter, r *http.Request) {
 
 	// Sort images by name (which sorts by timestamp).
 	slices.SortFunc(images, func(a, b imageEntry) int {
-		if a.Name < b.Name {
-			return -1
-		}
-		return 1
+		return strings.Compare(a.Name, b.Name)
 	})
 
 	resp := dateImagesResponse{
 		Date:              date,
 		Images:            images,
-		Highlights:        loadHighlights(dirPath, date),
+		Highlights:        loadHighlights(root, date),
 		HighlightsEnabled: s.cfg.Output.Highlights.Enabled,
 		Video:             videoURL,
 		Keogram:           keogramURL,
@@ -374,33 +480,75 @@ func extractTime(name string) string {
 	return hh + ":" + mm + ":" + ss
 }
 
+// openOutputRoot opens the output directory as an os.Root. Every path that
+// reaches the filesystem from a request is resolved through it, so a name that
+// climbs out with ".." — or a symlink inside the tree pointing outside it —
+// fails in the syscall instead of being served. The root is opened per request
+// (a single openat) so an output directory that is created, moved, or
+// recreated while the server runs needs no restart.
+func (s *Server) openOutputRoot() (*os.Root, error) {
+	return os.OpenRoot(s.cfg.Output.Directory)
+}
+
 func (s *Server) handleOutput(w http.ResponseWriter, r *http.Request) {
 	relPath := r.PathValue("path")
-
-	// Security check: reject path traversal.
-	clean := filepath.Clean(relPath)
-	if strings.HasPrefix(clean, "..") {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if relPath == "" {
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 
-	absPath := filepath.Join(s.cfg.Output.Directory, relPath)
+	root, err := s.openOutputRoot()
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer root.Close()
 
-	wStr := r.URL.Query().Get("w")
-	if wStr != "" {
-		width, err := strconv.Atoi(wStr)
-		if err == nil && width > 0 && width <= 1920 {
-			s.serveThumb(w, absPath, width)
-			return
-		}
+	if width, ok := thumbWidth(r); ok {
+		s.serveThumb(w, root, relPath, width)
+		return
 	}
 
-	http.ServeFile(w, r, absPath)
+	s.serveFile(w, r, root, relPath)
 }
 
-func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
-	dir := filepath.Dir(absPath)
-	base := filepath.Base(absPath)
+// thumbWidth reports the thumbnail width requested via ?w=N, and whether one
+// was present and within range.
+func thumbWidth(r *http.Request) (int, bool) {
+	wStr := r.URL.Query().Get("w")
+	if wStr == "" {
+		return 0, false
+	}
+	width, err := strconv.Atoi(wStr)
+	if err != nil || width <= 0 || width > 1920 {
+		return 0, false
+	}
+	return width, true
+}
+
+// serveFile serves relPath from inside root. http.ServeContent is used rather
+// than http.ServeFile because the file is opened through the root; it still
+// honours Range requests, so seeking within a timelapse MP4 works.
+func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, root *os.Root, relPath string) {
+	f, err := root.Open(relPath)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	http.ServeContent(w, r, filepath.Base(relPath), info.ModTime(), f)
+}
+
+func (s *Server) serveThumb(w http.ResponseWriter, root *os.Root, relPath string, width int) {
+	dir := filepath.Dir(relPath)
+	base := filepath.Base(relPath)
 	ext := filepath.Ext(base)
 	baseNoExt := strings.TrimSuffix(base, ext)
 
@@ -408,10 +556,8 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	cachePath := filepath.Join(cacheDir, baseNoExt+"_"+strconv.Itoa(width)+".jpg")
 
 	// Try cache first.
-	if data, err := os.ReadFile(cachePath); err == nil {
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Write(data)
+	if data, err := root.ReadFile(cachePath); err == nil {
+		writeThumb(w, data)
 		return
 	}
 
@@ -421,7 +567,7 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	defer func() { <-s.thumbSem }()
 
 	// Open and decode source image.
-	f, err := os.Open(absPath)
+	f, err := root.Open(relPath)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -443,13 +589,17 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 	}
 
 	// Save to cache (best-effort).
-	if err := os.MkdirAll(cacheDir, 0755); err == nil {
-		os.WriteFile(cachePath, buf.Bytes(), 0644)
+	if err := root.MkdirAll(cacheDir, 0755); err == nil {
+		root.WriteFile(cachePath, buf.Bytes(), 0644)
 	}
 
+	writeThumb(w, buf.Bytes())
+}
+
+func writeThumb(w http.ResponseWriter, data []byte) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(buf.Bytes())
+	w.Write(data)
 }
 
 // handleFocus runs star detection on the most recent frame and returns the
@@ -457,12 +607,19 @@ func (s *Server) serveThumb(w http.ResponseWriter, absPath string, width int) {
 // and minimize FWHM. Results are cached per frame (path + mtime), so polling
 // only pays for a decode when a new frame lands.
 func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
-	path, err := latestImagePath(s.cfg.Output.Directory)
+	root, err := s.openOutputRoot()
+	if err != nil {
+		http.Error(w, "no images found", http.StatusNotFound)
+		return
+	}
+	defer root.Close()
+
+	path, err := latestImagePath(root)
 	if err != nil || path == "" {
 		http.Error(w, "no images found", http.StatusNotFound)
 		return
 	}
-	info, err := os.Stat(path)
+	info, err := root.Stat(path)
 	if err != nil {
 		http.Error(w, "no images found", http.StatusNotFound)
 		return
@@ -476,7 +633,7 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 	if !cached {
 		// Full-frame decode — bound it like the thumbnail path.
 		s.thumbSem <- struct{}{}
-		f, err := os.Open(path)
+		f, err := root.Open(path)
 		if err != nil {
 			<-s.thumbSem
 			http.Error(w, "failed to open image", http.StatusInternalServerError)
@@ -512,30 +669,36 @@ func (s *Server) handleFocus(w http.ResponseWriter, r *http.Request) {
 // By default the full-resolution image is returned. Add ?w=N to get a
 // resized JPEG (same thumb mechanism as /output).
 func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
-	path, err := latestImagePath(s.cfg.Output.Directory)
+	root, err := s.openOutputRoot()
+	if err != nil {
+		http.Error(w, "no images found", http.StatusNotFound)
+		return
+	}
+	defer root.Close()
+
+	path, err := latestImagePath(root)
 	if err != nil || path == "" {
 		http.Error(w, "no images found", http.StatusNotFound)
 		return
 	}
 
-	wStr := r.URL.Query().Get("w")
-	if wStr != "" {
-		width, err := strconv.Atoi(wStr)
-		if err == nil && width > 0 && width <= 1920 {
-			s.serveThumb(w, path, width)
-			return
-		}
+	if width, ok := thumbWidth(r); ok {
+		s.serveThumb(w, root, path, width)
+		return
 	}
 
 	// No-cache so external dashboards always fetch the freshest frame.
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	http.ServeFile(w, r, path)
+	s.serveFile(w, r, root, path)
 }
 
-// latestImagePath returns the absolute path of the most recently modified
-// captured image (jpg/png) across all date directories in outputDir.
-func latestImagePath(outputDir string) (string, error) {
-	dates, err := os.ReadDir(outputDir)
+// latestImagePath returns the path, relative to the output root, of the newest
+// captured frame: the last image by filename in the newest date directory.
+// Frames are named with a sortable timestamp, so filename order is capture
+// order — no stat of every candidate is needed.
+func latestImagePath(root *os.Root) (string, error) {
+	fsys := root.FS()
+	dates, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return "", err
 	}
@@ -551,8 +714,7 @@ func latestImagePath(outputDir string) (string, error) {
 	slices.Reverse(sorted)
 
 	for _, date := range sorted {
-		dirPath := filepath.Join(outputDir, date)
-		files, err := os.ReadDir(dirPath)
+		files, err := fs.ReadDir(fsys, date)
 		if err != nil {
 			continue
 		}
@@ -574,7 +736,7 @@ func latestImagePath(outputDir string) (string, error) {
 				continue
 			}
 			if isImageFile(lower) {
-				return filepath.Join(dirPath, f.Name()), nil
+				return filepath.Join(date, f.Name()), nil
 			}
 		}
 	}

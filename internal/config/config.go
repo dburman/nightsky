@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -369,6 +370,12 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	v.SetEnvPrefix("NIGHTSKY")
+	// Config keys are dotted ("upload.http.authorization") but environment
+	// variable names cannot contain dots, so the separator has to be mapped
+	// explicitly: without this, AutomaticEnv looks for NIGHTSKY_UPLOAD.HTTP.
+	// AUTHORIZATION, which no shell can set, and every documented override is
+	// silently ignored.
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
 	if err := v.ReadInConfig(); err != nil {
@@ -501,6 +508,16 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("upload.s3.region", "us-east-1")
 	v.SetDefault("upload.s3.prefix", "nightsky")
 	v.SetDefault("upload.http.enabled", false)
+
+	// Keys with no meaningful default still need registering: viper's
+	// Unmarshal only consults the environment for keys it already knows
+	// about, so an unregistered key cannot be set from the environment at
+	// all. These are exactly the ones worth keeping out of a YAML file on a
+	// removable SD card.
+	v.SetDefault("upload.s3.bucket", "")
+	v.SetDefault("upload.s3.endpoint", "")
+	v.SetDefault("upload.http.url", "")
+	v.SetDefault("upload.http.authorization", "")
 
 	v.SetDefault("dark.enabled", false)
 	v.SetDefault("dark.directory", "./darks")

@@ -94,24 +94,47 @@ func typeSize(t uint16) int {
 	return 1
 }
 
+// valueSize returns the byte length of an entry's value as an int64.
+//
+// The width matters. Both typ and count are read straight off disk, and this
+// binary is built for 32-bit ARM (Pi Zero 2 / armv7) where int is 32 bits: a
+// corrupt count makes typeSize*count overflow to a negative length in int, and
+// slicing with a negative length panics — killing the capture loop over a
+// truncated file. Computing in int64 cannot overflow, because typeSize is at
+// most 8 and count is at most 2^32-1.
+func valueSize(typ uint16, count uint32) int64 {
+	return int64(typeSize(typ)) * int64(count)
+}
+
 // bytesOf returns the entry's value bytes, following the offset when the value
-// doesn't fit in the inline 4-byte field.
+// doesn't fit in the inline 4-byte field. It returns nil for any entry whose
+// declared size or offset does not lie within the file.
 func (e entry) bytesOf() []byte {
-	n := typeSize(e.typ) * int(e.count)
-	if n <= 4 {
-		return e.raw[:n]
-	}
-	if int(e.offset)+n > len(e.data) {
+	n := valueSize(e.typ, e.count)
+	if n <= 0 {
 		return nil
 	}
-	return e.data[e.offset : int(e.offset)+n]
+	if n <= 4 {
+		if int64(len(e.raw)) < n {
+			return nil
+		}
+		return e.raw[:n]
+	}
+	end := int64(e.offset) + n
+	if end > int64(len(e.data)) {
+		return nil
+	}
+	return e.data[e.offset:end]
 }
 
 // uints reads SHORT/LONG/BYTE values as uint32s.
 func (e entry) uints() []uint32 {
 	b := e.bytesOf()
-	out := make([]uint32, 0, e.count)
 	sz := typeSize(e.typ)
+	// Size the result from the bytes actually available, not from the
+	// file's declared count: a corrupt count would otherwise reserve
+	// gigabytes up front.
+	out := make([]uint32, 0, len(b)/sz)
 	for i := 0; i+sz <= len(b); i += sz {
 		switch e.typ {
 		case 1:
@@ -128,7 +151,7 @@ func (e entry) uints() []uint32 {
 // rationals reads RATIONAL values (num/den) as float64s.
 func (e entry) rationals() []float64 {
 	b := e.bytesOf()
-	out := make([]float64, 0, e.count)
+	out := make([]float64, 0, len(b)/8)
 	for i := 0; i+8 <= len(b); i += 8 {
 		num := e.bo.Uint32(b[i:])
 		den := e.bo.Uint32(b[i+4:])

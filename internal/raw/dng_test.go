@@ -143,3 +143,87 @@ func TestDecodeDNG_RealSample(t *testing.T) {
 		t.Errorf("CFAPattern len = %d, want 4", len(im.CFAPattern))
 	}
 }
+
+// valueSize must stay exact for counts that overflow a 32-bit int. This is the
+// platform-independent half of the 32-bit fix: on arm64/amd64 the old int
+// arithmetic happened not to wrap, so only asserting on bytesOf would pass on
+// a dev machine while still panicking on the armv7 build target.
+func TestValueSize_NoOverflow(t *testing.T) {
+	for _, tc := range []struct {
+		typ   uint16
+		count uint32
+		want  int64
+	}{
+		{typ: 3, count: 2, want: 4},                       // SHORT, fits inline
+		{typ: 5, count: 0x2000_0001, want: 0x1_0000_0008}, // RATIONAL, overflows int32
+		{typ: 1, count: 0xFFFF_FFFF, want: 0xFFFF_FFFF},   // BYTE, max count
+		{typ: 5, count: 0xFFFF_FFFF, want: 0x7_FFFF_FFF8}, // widest type, max count
+	} {
+		if got := valueSize(tc.typ, tc.count); got != tc.want {
+			t.Errorf("valueSize(%d, %#x) = %#x, want %#x", tc.typ, tc.count, got, tc.want)
+		}
+	}
+}
+
+// A tag count read off disk must not be able to overflow the size arithmetic.
+func TestEntry_BytesOfRejectsOverflowingCount(t *testing.T) {
+	data := make([]byte, 64)
+	e := entry{
+		typ:    5, // RATIONAL, 8 bytes each
+		count:  0x2000_0001,
+		raw:    data[:4],
+		data:   data,
+		bo:     binary.LittleEndian,
+		offset: 8,
+	}
+
+	// Must not panic, and must not hand back bytes it cannot vouch for.
+	if got := e.bytesOf(); got != nil {
+		t.Errorf("bytesOf() = %d bytes, want nil for an out-of-range count", len(got))
+	}
+	if got := e.rationals(); len(got) != 0 {
+		t.Errorf("rationals() = %d values, want none", len(got))
+	}
+	if got := e.uints(); len(got) != 0 {
+		t.Errorf("uints() = %d values, want none", len(got))
+	}
+}
+
+// An entry pointing past the end of the file yields nothing rather than
+// reading out of bounds.
+func TestEntry_BytesOfRejectsOutOfRangeOffset(t *testing.T) {
+	data := make([]byte, 64)
+	e := entry{typ: 3, count: 8, raw: data[:4], data: data, bo: binary.LittleEndian, offset: 60}
+	if got := e.bytesOf(); got != nil {
+		t.Errorf("bytesOf() = %d bytes, want nil when the value runs past EOF", len(got))
+	}
+}
+
+// DecodeDNG parses attacker-shaped input in the sense that matters here: a
+// truncated or corrupted file written by a killed rpicam-still. It must return
+// an error, never panic — a panic here kills the capture loop.
+func FuzzDecodeDNG(f *testing.F) {
+	f.Add(buildSyntheticDNG(8, 6, 1000))
+	f.Add([]byte("II\x2a\x00"))
+	f.Add([]byte("MM\x00\x2a\x00\x00\x00\x08"))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		img, err := DecodeDNG(data)
+		if err == nil && img == nil {
+			t.Fatal("DecodeDNG returned nil image with nil error")
+		}
+	})
+}
+
+// Truncating a valid DNG at every prefix length must never panic.
+func TestDecodeDNG_TruncatedPrefixes(t *testing.T) {
+	full := buildSyntheticDNG(8, 6, 1000)
+	for n := 0; n < len(full); n++ {
+		if _, err := DecodeDNG(full[:n]); err == nil {
+			// A short prefix legitimately decoding is fine; the point is
+			// that it neither panics nor reads out of bounds.
+			continue
+		}
+	}
+}

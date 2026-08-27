@@ -149,7 +149,19 @@ docker compose logs -f nightsky      # capture loop
 docker compose logs -f nightsky-ui   # web UI
 ```
 
-Then open `http://<pi-hostname>:8080` in a browser.
+The containers run as uid 10001, so the bind-mounted directories have to be
+writable by it before the first start:
+
+```bash
+mkdir -p output darks && sudo chown -R 10001:10001 output darks
+```
+
+(or set `user: "${UID}:${GID}"` on both services to run as yourself instead).
+
+The compose file publishes the UI on `127.0.0.1:8080` — see
+[Exposing the web UI](#exposing-the-web-ui) before opening it to your network.
+With the default mapping, browse to `http://localhost:8080` on the Pi itself,
+or tunnel in with `ssh -L 8080:localhost:8080 pi@<pi-hostname>`.
 
 The `nightsky-ui` service shares the same `./output` volume as `nightsky` so it sees captures in real time without needing camera access.
 
@@ -208,7 +220,7 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-ExecStart=/usr/local/bin/nightsky serve --config /etc/nightsky/nightsky.yaml --addr :8080
+ExecStart=/usr/local/bin/nightsky serve --config /etc/nightsky/nightsky.yaml --addr 127.0.0.1:8080
 Restart=on-failure
 RestartSec=10
 
@@ -226,7 +238,8 @@ journalctl -u nightsky -f
 journalctl -u nightsky-ui -f
 ```
 
-Then open `http://<pi-hostname>:8080` in a browser.
+Then open `http://localhost:8080` on the Pi — see
+[Exposing the web UI](#exposing-the-web-ui) to reach it from another machine.
 
 ### Option 3: Docker run
 
@@ -241,12 +254,34 @@ docker run -d --name nightsky \
 
 # Web UI (shares the same output volume)
 docker run -d --name nightsky-ui \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -v ./nightsky.yaml:/etc/nightsky/nightsky.yaml:ro \
   -v ./output:/output \
   nightsky:latest \
-  serve --config /etc/nightsky/nightsky.yaml --addr :8080
+  serve --config /etc/nightsky/nightsky.yaml --addr 0.0.0.0:8080
 ```
+
+`--addr 0.0.0.0:8080` binds inside the container; `-p 127.0.0.1:8080:8080`
+is what actually limits who can reach it. See
+[Exposing the web UI](#exposing-the-web-ui).
+
+### Exposing the web UI
+
+The web UI has **no authentication**, and `/api/config` reports the camera's
+latitude and longitude — for a home installation, that is your address. It
+therefore binds to `127.0.0.1:8080` by default, and the Docker and Compose
+recipes publish it on the host's loopback interface only.
+
+To reach it from elsewhere, in rough order of preference:
+
+- **SSH tunnel** — nothing to configure: `ssh -L 8080:localhost:8080 pi@<host>`,
+  then browse to `http://localhost:8080`.
+- **Authenticating reverse proxy** — Caddy, nginx, or similar terminating TLS
+  and requiring a login in front of `127.0.0.1:8080`.
+- **Open on a trusted LAN** — pass `--addr 0.0.0.0:8080` (or publish
+  `8080:8080` in Compose). The service logs a warning at startup when it binds
+  beyond loopback. Do this only if you trust every device on the network, and
+  never forward the port from the internet.
 
 ---
 
@@ -259,7 +294,20 @@ Nightsky uses a single YAML configuration file. The search order is:
 3. `$HOME/.config/nightsky/nightsky.yaml`
 4. `/etc/nightsky/nightsky.yaml`
 
-Environment variables override config file values with the prefix `NIGHTSKY_` (e.g., `NIGHTSKY_CAMERA_TYPE=zwo`).
+Environment variables override config file values. The name is the config key
+uppercased with `.` replaced by `_`, under the `NIGHTSKY_` prefix:
+
+| Config key                    | Environment variable                 |
+| ----------------------------- | ------------------------------------ |
+| `camera.type`                 | `NIGHTSKY_CAMERA_TYPE`               |
+| `output.directory`            | `NIGHTSKY_OUTPUT_DIRECTORY`          |
+| `upload.s3.bucket`            | `NIGHTSKY_UPLOAD_S3_BUCKET`          |
+| `upload.http.authorization`   | `NIGHTSKY_UPLOAD_HTTP_AUTHORIZATION` |
+| `alerts.webhook_url`          | `NIGHTSKY_ALERTS_WEBHOOK_URL`        |
+
+This is the recommended way to supply the two secrets — the HTTP upload
+`authorization` header and the ntfy webhook URL (whose topic is the secret) —
+so they stay out of a YAML file on a removable SD card.
 
 On low-memory boards, set a top-level `memory_limit_mb` (e.g. `250` on a 512 MB Pi Zero 2) — it installs a soft Go heap limit so the garbage collector frees memory aggressively before the kernel OOM killer gets involved, leaving headroom for ffmpeg during end-of-night encoding. The `GOMEMLIMIT` environment variable takes precedence when set.
 
@@ -564,12 +612,15 @@ nightsky capture --log-level debug
 Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected.
 
 ```bash
-nightsky serve
-nightsky serve --addr :8080
-nightsky serve --config /etc/nightsky/nightsky.yaml --addr 0.0.0.0:8080
+nightsky serve                                                        # 127.0.0.1:8080
+nightsky serve --config /etc/nightsky/nightsky.yaml
+nightsky serve --addr 0.0.0.0:8080                                    # trusted LAN only
 ```
 
-The UI is served at `http://localhost:8080` by default. It is embedded in the binary with no external dependencies. Three tabs are available:
+The UI is served at `http://localhost:8080` by default. It binds to loopback
+because it is unauthenticated and reports the camera's coordinates — see
+[Exposing the web UI](#exposing-the-web-ui). It is embedded in the binary with
+no external dependencies. Three tabs are available:
 
 - **Configuration** — current config values rendered as a read-only dashboard
 - **Captures** — browse nights via a calendar date picker; sub-tabs for Video, Keogram, Star Trails, Highlights, and Images with paginated lazy-loaded thumbnails

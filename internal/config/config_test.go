@@ -49,3 +49,41 @@ func TestHighlights_ExplicitlyDisabled(t *testing.T) {
 		t.Error("keogram.enabled = false, want true (untouched default)")
 	}
 }
+
+// README documents NIGHTSKY_* environment overrides; viper only honours them
+// when the dot-to-underscore key replacer is installed and the key is
+// registered, so both are covered here.
+func TestLoad_EnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nightsky.yaml")
+	if err := os.WriteFile(path, []byte("camera:\n  type: libcamera\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("NIGHTSKY_CAMERA_TYPE", "zwo")
+	t.Setenv("NIGHTSKY_OUTPUT_DIRECTORY", "/srv/frames")
+	t.Setenv("NIGHTSKY_UPLOAD_HTTP_AUTHORIZATION", "Bearer secret")
+	t.Setenv("NIGHTSKY_UPLOAD_S3_BUCKET", "sky-bucket")
+	t.Setenv("NIGHTSKY_ALERTS_AURORA_MIN_FRAMES", "7")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Camera.Type != "zwo" {
+		t.Errorf("camera.type = %q, want zwo (env must beat the config file)", cfg.Camera.Type)
+	}
+	if cfg.Output.Directory != "/srv/frames" {
+		t.Errorf("output.directory = %q, want /srv/frames", cfg.Output.Directory)
+	}
+	if cfg.Upload.HTTP.Authorization != "Bearer secret" {
+		t.Errorf("upload.http.authorization = %q, want %q", cfg.Upload.HTTP.Authorization, "Bearer secret")
+	}
+	if cfg.Upload.S3.Bucket != "sky-bucket" {
+		t.Errorf("upload.s3.bucket = %q, want sky-bucket", cfg.Upload.S3.Bucket)
+	}
+	if cfg.Alerts.Aurora.MinFrames != 7 {
+		t.Errorf("alerts.aurora.min_frames = %d, want 7", cfg.Alerts.Aurora.MinFrames)
+	}
+}

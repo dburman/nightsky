@@ -1,7 +1,6 @@
 package upload
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -40,6 +39,12 @@ func NewHTTPUploader(cfg HTTPConfig, logger *slog.Logger) *HTTPUploader {
 }
 
 // Upload uploads a file via HTTP POST multipart form data.
+//
+// The multipart body is streamed through an io.Pipe rather than assembled in
+// a bytes.Buffer: a night's timelapse can be hundreds of megabytes, and
+// buffering it would be the single largest allocation in the process — on a
+// 512 MB board that competes directly with capture and the ffmpeg encode.
+// Streaming keeps the footprint at one copy buffer regardless of file size.
 func (u *HTTPUploader) Upload(ctx context.Context, localPath string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -52,33 +57,51 @@ func (u *HTTPUploader) Upload(ctx context.Context, localPath string) error {
 		return fmt.Errorf("stat file: %w", err)
 	}
 
-	// Build multipart form.
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
+	name := filepath.Base(localPath)
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	// Read the boundary before the writer goroutine starts touching it.
+	contentType := writer.FormDataContentType()
 
-	part, err := writer.CreateFormFile("file", filepath.Base(localPath))
-	if err != nil {
-		return fmt.Errorf("create form file: %w", err)
-	}
+	go func() {
+		// CloseWithError(nil) is equivalent to Close, so a single deferred
+		// call reports whichever error stopped the write to the reader — the
+		// request then fails with that error instead of sending a truncated
+		// body.
+		var werr error
+		defer func() { pw.CloseWithError(werr) }()
 
-	if _, err := io.Copy(part, f); err != nil {
-		return fmt.Errorf("copy file data: %w", err)
-	}
+		part, err := writer.CreateFormFile("file", name)
+		if err != nil {
+			werr = fmt.Errorf("create form file: %w", err)
+			return
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			werr = fmt.Errorf("copy file data: %w", err)
+			return
+		}
+		if err := writer.WriteField("filename", name); err != nil {
+			werr = fmt.Errorf("write filename field: %w", err)
+			return
+		}
+		if err := writer.WriteField("content_type", detectContentType(name)); err != nil {
+			werr = fmt.Errorf("write content_type field: %w", err)
+			return
+		}
+		if err := writer.Close(); err != nil {
+			werr = fmt.Errorf("close multipart writer: %w", err)
+		}
+	}()
+	// Abandoning the request (error, context cancellation) must unblock the
+	// writer goroutine rather than leak it.
+	defer pr.Close()
 
-	// Add metadata fields.
-	writer.WriteField("filename", filepath.Base(localPath))
-	writer.WriteField("content_type", detectContentType(filepath.Base(localPath)))
-
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.url, &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.url, pr)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", contentType)
 	if u.authorization != "" {
 		req.Header.Set("Authorization", u.authorization)
 	}
@@ -96,7 +119,7 @@ func (u *HTTPUploader) Upload(ctx context.Context, localPath string) error {
 
 	u.logger.Info("uploaded via HTTP",
 		"url", u.url,
-		"file", filepath.Base(localPath),
+		"file", name,
 		"size_kb", stat.Size()/1024,
 		"status", resp.StatusCode,
 	)

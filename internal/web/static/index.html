@@ -697,11 +697,17 @@ function kv(pairs) {
   ).join('') + '</table>';
 }
 
+// esc escapes for both element and quoted-attribute context. The quote
+// characters matter: esc() is interpolated into src="..." and data-src="..."
+// attributes built from filenames, and a filename containing a double quote
+// would otherwise close the attribute and inject markup.
 function esc(s) {
   return String(s)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /* ── Tab routing ────────────────────────────────────────── */
