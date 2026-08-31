@@ -484,3 +484,21 @@ func TestListenAndServe_ShutsDownOnContextCancel(t *testing.T) {
 		t.Fatal("ListenAndServe did not return after context cancellation")
 	}
 }
+
+func TestDisplayURL(t *testing.T) {
+	cases := []struct{ addr, want string }{
+		{":8080", "http://localhost:8080"},
+		{"0.0.0.0:8080", "http://localhost:8080"},
+		{"[::]:8080", "http://localhost:8080"},
+		{"127.0.0.1:8080", "http://127.0.0.1:8080"},
+		{"192.168.1.50:8080", "http://192.168.1.50:8080"},
+		{"[::1]:8080", "http://[::1]:8080"},
+		{"astrocam:8080", "http://astrocam:8080"},
+		{"garbage", "http://garbage"},
+	}
+	for _, c := range cases {
+		if got := displayURL(c.addr); got != c.want {
+			t.Errorf("displayURL(%q) = %q, want %q", c.addr, got, c.want)
+		}
+	}
+}

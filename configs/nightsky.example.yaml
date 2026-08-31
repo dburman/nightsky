@@ -221,6 +221,23 @@ output:
     # Remove the original PNG after successful conversion
     delete_originals: true
 
+# ── Web UI (nightsky serve) ───────────────────────────────────────────────────
+web:
+  # Listen address for the web UI.
+  #
+  # The UI has no authentication and /api/config reports the camera's
+  # coordinates — for a home installation, your address — so it listens on
+  # loopback only unless you change this. Put an authenticating reverse proxy
+  # in front of it, or use an SSH tunnel, before exposing it.
+  #
+  #   127.0.0.1:8080     loopback only (default)
+  #   0.0.0.0:8080       every interface — trusted LAN only
+  #   [::]:8080          every interface, including IPv6
+  #   192.168.1.50:8080  one specific interface
+  #
+  # The --addr flag overrides this. NIGHTSKY_WEB_ADDR also works.
+  addr: "127.0.0.1:8080"
+
 upload:
   # Upload each captured image (can be bandwidth-heavy)
   upload_images: false

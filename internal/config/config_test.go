@@ -87,3 +87,30 @@ func TestLoad_EnvOverrides(t *testing.T) {
 		t.Errorf("alerts.aurora.min_frames = %d, want 7", cfg.Alerts.Aurora.MinFrames)
 	}
 }
+
+// The web listener is configurable from YAML and the environment, not just the
+// --addr flag, so a systemd or Docker deployment can expose the UI without
+// editing a unit file.
+func TestLoad_WebAddr(t *testing.T) {
+	t.Run("defaults to loopback", func(t *testing.T) {
+		cfg := loadWith(t, "camera:\n  type: libcamera\n")
+		if cfg.Web.Addr != "127.0.0.1:8080" {
+			t.Errorf("web.addr = %q, want 127.0.0.1:8080", cfg.Web.Addr)
+		}
+	})
+
+	t.Run("config file overrides the default", func(t *testing.T) {
+		cfg := loadWith(t, "web:\n  addr: \"0.0.0.0:9000\"\n")
+		if cfg.Web.Addr != "0.0.0.0:9000" {
+			t.Errorf("web.addr = %q, want 0.0.0.0:9000", cfg.Web.Addr)
+		}
+	})
+
+	t.Run("environment overrides the config file", func(t *testing.T) {
+		t.Setenv("NIGHTSKY_WEB_ADDR", "192.168.1.50:8080")
+		cfg := loadWith(t, "web:\n  addr: \"0.0.0.0:9000\"\n")
+		if cfg.Web.Addr != "192.168.1.50:8080" {
+			t.Errorf("web.addr = %q, want 192.168.1.50:8080", cfg.Web.Addr)
+		}
+	})
+}

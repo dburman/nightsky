@@ -133,7 +133,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	s.logger.Info("web UI started", "url", "http://localhost"+s.addr)
+	s.logger.Info("web UI started", "url", displayURL(s.addr))
 	if !isLoopback(s.addr) {
 		// The UI has no authentication and /api/config reports the camera's
 		// coordinates, so binding beyond loopback is a deliberate choice the
@@ -164,6 +164,21 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		return <-errCh
 	}
+}
+
+// displayURL renders a listen address as a URL a person can click. A wildcard
+// bind ("", "0.0.0.0", "::") has no single address, so it shows as localhost;
+// anything else is shown as bound, with IPv6 literals kept in brackets.
+func displayURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // isLoopback reports whether a listen address binds only the loopback

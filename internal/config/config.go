@@ -33,10 +33,26 @@ type Config struct {
 	Day      ModeConfig     `mapstructure:"day"       json:"day"`
 	Night    ModeConfig     `mapstructure:"night"     json:"night"`
 	Output   OutputConfig   `mapstructure:"output"    json:"output"`
+	Web      WebConfig      `mapstructure:"web"       json:"web"`
 	Upload   UploadConfig   `mapstructure:"upload"    json:"upload"`
 	Dark     DarkConfig     `mapstructure:"dark"      json:"dark"`
 	Flat     FlatConfig     `mapstructure:"flat"      json:"flat"`
 	Alerts   AlertsConfig   `mapstructure:"alerts"    json:"alerts"`
+}
+
+// WebConfig controls the `nightsky serve` web UI listener.
+type WebConfig struct {
+	// Addr is the listen address, "host:port".
+	//
+	// Defaults to 127.0.0.1:8080. The UI has no authentication and
+	// /api/config reports the camera's coordinates — for a home installation,
+	// the operator's address — so exposing it is deliberate rather than the
+	// default. Use "0.0.0.0:8080" for every interface, "[::]:8080" to include
+	// IPv6, or a specific interface address such as "192.168.1.50:8080".
+	// Binding beyond loopback logs a warning at startup.
+	//
+	// The --addr flag overrides this when passed.
+	Addr string `mapstructure:"addr" json:"addr"`
 }
 
 // AlertsConfig controls push notifications via a webhook (ntfy-compatible:
@@ -501,6 +517,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("output.webp.enabled", false)
 	v.SetDefault("output.webp.quality", 85)
 	v.SetDefault("output.webp.delete_originals", false)
+
+	v.SetDefault("web.addr", "127.0.0.1:8080")
 
 	v.SetDefault("upload.upload_images", false)
 	v.SetDefault("upload.upload_timelapse", true)

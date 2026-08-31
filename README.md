@@ -272,16 +272,27 @@ latitude and longitude — for a home installation, that is your address. It
 therefore binds to `127.0.0.1:8080` by default, and the Docker and Compose
 recipes publish it on the host's loopback interface only.
 
+The address is configurable — the `--addr` flag, `web.addr` in the config
+file, or `NIGHTSKY_WEB_ADDR`. The flag wins when passed, otherwise the config
+value applies:
+
+```yaml
+web:
+  addr: "0.0.0.0:8080"      # every interface
+  # addr: "192.168.1.50:8080"  # one specific interface
+  # addr: "[::]:8080"          # every interface, including IPv6
+```
+
 To reach it from elsewhere, in rough order of preference:
 
 - **SSH tunnel** — nothing to configure: `ssh -L 8080:localhost:8080 pi@<host>`,
   then browse to `http://localhost:8080`.
 - **Authenticating reverse proxy** — Caddy, nginx, or similar terminating TLS
   and requiring a login in front of `127.0.0.1:8080`.
-- **Open on a trusted LAN** — pass `--addr 0.0.0.0:8080` (or publish
-  `8080:8080` in Compose). The service logs a warning at startup when it binds
-  beyond loopback. Do this only if you trust every device on the network, and
-  never forward the port from the internet.
+- **Open on a trusted LAN** — set `web.addr: "0.0.0.0:8080"` (or pass
+  `--addr`, or publish `8080:8080` in Compose). The service logs a warning at
+  startup when it binds beyond loopback. Do this only if you trust every
+  device on the network, and never forward the port from the internet.
 
 ---
 
@@ -304,6 +315,7 @@ uppercased with `.` replaced by `_`, under the `NIGHTSKY_` prefix:
 | `upload.s3.bucket`            | `NIGHTSKY_UPLOAD_S3_BUCKET`          |
 | `upload.http.authorization`   | `NIGHTSKY_UPLOAD_HTTP_AUTHORIZATION` |
 | `alerts.webhook_url`          | `NIGHTSKY_ALERTS_WEBHOOK_URL`        |
+| `web.addr`                    | `NIGHTSKY_WEB_ADDR`                  |
 
 This is the recommended way to supply the two secrets — the HTTP upload
 `authorization` header and the ntfy webhook URL (whose topic is the secret) —
@@ -612,9 +624,9 @@ nightsky capture --log-level debug
 Starts the web UI server. Reads from the configured output directory — does not require a camera to be connected.
 
 ```bash
-nightsky serve                                                        # 127.0.0.1:8080
+nightsky serve                                     # web.addr, default 127.0.0.1:8080
 nightsky serve --config /etc/nightsky/nightsky.yaml
-nightsky serve --addr 0.0.0.0:8080                                    # trusted LAN only
+nightsky serve --addr 0.0.0.0:8080                 # override config; trusted LAN only
 ```
 
 The UI is served at `http://localhost:8080` by default. It binds to loopback

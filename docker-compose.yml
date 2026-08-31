@@ -84,7 +84,8 @@ services:
     <<: *common
     container_name: nightsky-ui
     # 0.0.0.0 inside the container is required for the published port to
-    # reach it; exposure is controlled by the host-side bind below.
+    # reach it; exposure is controlled by the host-side bind below. Passed as
+    # a flag so it overrides whatever web.addr the mounted config sets.
     command: ["serve", "--config", "/etc/nightsky/nightsky.yaml", "--addr", "0.0.0.0:8080"]
     ports:
       - "127.0.0.1:8080:8080"
