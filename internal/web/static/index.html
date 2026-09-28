@@ -631,9 +631,9 @@ table.kv td.v {
 <header>
   <a class="logo" href="/"><span>✦</span> Nightsky</a>
   <div class="main-tabs">
-    <button id="tab-config" class="active" onclick="showTab('config')">Configuration</button>
+    <button id="tab-live" class="active" onclick="showTab('live')">Live</button>
     <button id="tab-captures" onclick="showTab('captures')">Captures</button>
-    <button id="tab-live" onclick="showTab('live')">Live</button>
+    <button id="tab-config" onclick="showTab('config')">Configuration</button>
   </div>
   <div class="status-badge">
     <div class="dot" id="status-dot"></div>
@@ -642,9 +642,9 @@ table.kv td.v {
 </header>
 
 <main>
-  <!-- Configuration tab -->
-  <div id="pane-config" class="tab-pane active">
-    <div id="config-content"><div class="spinner"></div></div>
+  <!-- Live tab -->
+  <div id="pane-live" class="tab-pane active">
+    <div id="live-content"></div>
   </div>
 
   <!-- Captures tab -->
@@ -656,9 +656,9 @@ table.kv td.v {
     <div id="captures-content"><div class="spinner"></div></div>
   </div>
 
-  <!-- Live tab -->
-  <div id="pane-live" class="tab-pane">
-    <div id="live-content"></div>
+  <!-- Configuration tab -->
+  <div id="pane-config" class="tab-pane">
+    <div id="config-content"><div class="spinner"></div></div>
   </div>
 </main>
 
@@ -722,7 +722,8 @@ async function checkStatus() {
     if (!res.ok) throw new Error();
     const data = await res.json();
     dot.className  = 'dot live';
-    text.textContent = `v${data.version} · ${data.camera_type}`;
+    // Release builds are stamped from the git tag (v0.1.0); show the bare number.
+    text.textContent = `${String(data.version).replace(/^v/, '')} · ${data.camera_type}`;
   } catch {
     dot.className  = 'dot dead';
     text.textContent = 'offline';
@@ -1461,6 +1462,7 @@ function toggleLiveAuto() {
 /* ── Init ───────────────────────────────────────────────── */
 checkStatus();
 loadConfig();
+startLive();
 </script>
 </body>
 </html>
