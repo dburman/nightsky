@@ -1,5 +1,7 @@
 # Nightsky
 
+**Version 0.1.0** · [MIT License](LICENSE)
+
 A lightweight, CLI-configured all-sky camera service for long-exposure night photography and timelapse generation. Captures images continuously, automatically switching between day and night modes based on sun position, and uploads results to S3 or HTTP endpoints.
 
 Inspired by [AllskyTeam/allsky](https://github.com/AllskyTeam/allsky) but stripped down to the essentials — no PHP, no Node. Configure everything from the command line or a single YAML file.
@@ -797,6 +799,8 @@ output/
 │   ├── startrails-2026-03-15.jpg
 │   ├── wb-analysis-2026-03-15.txt
 │   ├── cloud-2026-03-15.csv              ← per-frame cloud coverage metrics
+│   ├── highlights-2026-03-15.json        ← top-5 highlight manifest
+│   ├── highlight-1-allsky-20260315231203.png  ← protected copy (survives raw pruning)
 │   └── .thumbs/            ← auto-generated thumbnail cache (160px JPEG)
 │       ├── allsky-20260315191503_160.jpg
 │       └── ...
@@ -819,7 +823,7 @@ internal/
 │   ├── zwo/           ZWO ASI SDK via CGo (build tag: zwo)
 │   └── libcamera/     rpicam-still / libcamera-still CLI wrapper
 ├── capture/           Capture loop, auto-exposure, dark frames, disk cleanup
-├── astro/             Sun position calculation (NOAA algorithm)
+├── astro/             Sun and moon position, lunar phase, night windows (NOAA algorithm)
 ├── image/             Overlay rendering, image encoding, thumbnail scaling
 ├── keogram/           Keogram generation (parallel image decode, direct pixel access)
 ├── startrails/        Star-trails generation (max-blend stack, parallel rows)
@@ -832,9 +836,14 @@ internal/
 ├── cloud/             Per-frame cloud coverage metric (mean + stddev of sky region)
 ├── gps/               GPS fix from gpsd (JSON streaming protocol, no external deps)
 ├── metrics/           Live capture state written per-frame, read by /api/metrics
+├── stars/             Star detection, count, and FWHM for sky quality and focus
+├── alerts/            Webhook notifier (ntfy-compatible), aurora detector, night summary
+├── thermal/           SoC temperature gate for heavy end-of-night processing
+├── raw/               DNG decoding and debayer for the raw calibration pipeline
+├── sdnotify/          systemd sd_notify / watchdog support (no external deps)
 └── config/            YAML configuration with viper
 ```
 
 ## License
 
-MIT
+Nightsky is released under the [MIT License](LICENSE). Copyright (c) 2026 Douglas Burman.
