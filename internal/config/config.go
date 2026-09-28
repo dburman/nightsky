@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 // Config is the top-level configuration for nightsky.
 type Config struct {

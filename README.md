@@ -1,6 +1,6 @@
 # Nightsky
 
-**Version 0.1.0** · [MIT License](LICENSE)
+**Version 0.1.1** · [MIT License](LICENSE)
 
 A lightweight, CLI-configured all-sky camera service for long-exposure night photography and timelapse generation. Captures images continuously, automatically switching between day and night modes based on sun position, and uploads results to S3 or HTTP endpoints.
 
